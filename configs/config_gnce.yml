@@ -1,0 +1,16 @@
+batch_wise: True
+batch_size: 128
+seed: 42
+device: cuda
+model:
+  encoder:
+    in_dim: ???
+    z_dim: 128
+    nm_layers: 2
+optim:
+  lr: 0.001
+
+augtype: GraphCL
+
+data_path: /disk/scratch1/asif/workspace/graphNCE/datasets
+results_path: /disk/scratch1/asif/workspace/graphNCE/results
