@@ -15,15 +15,15 @@ class Encoder(nn.Module):
 
 		self.config = config
 		self.activation = nn.PReLU(self.config['z_dim'])
-		self.network = []
+		self.network = nn.ModuleList()
 		for i in range(self.config['nm_layers']):
 			if i == 0:
-				self.network.append(GCNConv(self.config['in_dim'], self.config['z_dim']))
+				self.network.append(GCNConv(self.config['in_dim'], self.config['z_dim'], cached=False))
 			else:
-				self.network.append(GCNConv(self.config['in_dim'], self.config['z_dim']))
+				self.network.append(GCNConv(self.config['z_dim'], self.config['z_dim'], cached=False))
 
 	def forward(self, x, edge_index, edge_weight=None):
-		for layer in self.layers:
-			x = layer(x, edge_index, edge_weight)
+		for layer in range(self.config['nm_layers']):
+			x = self.network[layer](x, edge_index, edge_weight)
 			x = self.activation(x)
 		return x
