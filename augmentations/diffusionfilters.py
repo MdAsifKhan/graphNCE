@@ -2,14 +2,17 @@ import torch.nn as nn
 import torch
 from torch_geometric.transforms import GDC
 from torch_geometric.utils import add_self_loops, is_undirected, to_dense_adj, get_laplacian
+from torch_sparse import SparseTensor, coalesce
+from torch_scatter import scatter_add
 
 class DiffusionAugmentation(nn.Module):
     def __init__(self, nm_filters = 8,
                         filter_type = 'wavelet',
-                        add_self_loop = True):
+                        ignore_edge_attr=True):
         super(DiffusionAugmentation, self).__init__()
         self.nm_filters = nm_filters
         self.filter_type = filter_type
+        self.ignore_edge_attr = ignore_edge_attr
         #self.mixingdistn = Dirichlet(torch.tensor([0.5]*nm_scale))
 
     def transition_matrix(self, edge_index, edge_weight, num_nodes,
@@ -62,41 +65,46 @@ class DiffusionAugmentation(nn.Module):
 
     def heat_diffusion(self, edge_index, edge_weight, eps=0.1):
         nm_nodes = edge_index.max().item() + 1
+        if self.ignore_edge_attr or edge_weight is None:
+            edge_weight = torch.ones(edge_index.size(1), device=edge_index.device)
+
         T = torch.logspace(0.01, 1, self.nm_filters)
         edge_index_T, edge_weight_T = [], []
-        for t in T:
+        for t in range(T):
             diffusion_t = GDC().diffusion_matrix_exact(edge_index, edge_weight, method='heat', t=t)
             edge_index_t, edge_weight_t = GDC().sparsify_dense(diffusion_t, method='threshold', eps=eps)
             edge_index_t, edge_weight_t = coalesce(edge_index_t, edge_weight_t, nm_nodes, nm_nodes)
             edge_index_t, edge_weight_t = self.transition_matrix(edge_index_t, edge_weight_t, nm_nodes, normalization='sym')
             edge_index_T.append(edge_index_t)
             edge_weight_T.append(edge_weight_t)
-        edge_index_T = torch.stack(edge_index_T)
-        edge_weight_T = torch.stack(edge_weight_T)
+        #edge_index_T = torch.stack(edge_index_T)
+        #edge_weight_T = torch.stack(edge_weight_T)
         return edge_index_T, edge_weight_T
 
     def wavelet_diffusion(self, edge_index, edge_weight, eps=0.1):
         nm_nodes = edge_index.max().item() + 1
+        if self.ignore_edge_attr or edge_weight is None:
+            edge_weight = torch.ones(edge_index.size(1), device=edge_index.device)
         edge_index, edge_weight = self.transition_matrix(edge_index, edge_weight, nm_nodes, normalization='sym')
         W = to_dense_adj(edge_index, edge_attr=edge_weight).squeeze()
-        eye = torch.eye(adj.shape).to(adj.device)
+        eye = torch.eye(*W.shape).to(W.device)
         T = 0.5 * (eye + W) # Lazy diffusion operator
         edge_index_0, edge_weight_0 = GDC().sparsify_dense(T, method='threshold', eps=eps)
         edge_index_0, edge_weight_0 = coalesce(edge_index_0, edge_weight_0, nm_nodes, nm_nodes)
         edge_index_0, edge_weight_0 = self.transition_matrix(edge_index_0, edge_weight_0, nm_nodes, normalization='sym')
-        edge_index_T = [edge_index_t]
-        edge_weight_T = [edge_weight_t]
-        for i in range(self.nm_scale):
+        edge_index_T = [edge_index_0]
+        edge_weight_T = [edge_weight_0]
+        for i in range(1, self.nm_filters):
             dilation = 2**(i-1)
             Tp = torch.matrix_power(T, dilation)
-            filter_t = Lp.mm(eye - Tp)
-            edge_index_t, edge_weight_t = GDC().sparsify_dense(filter_t, method='threshold', eps=eps)
+            filter_t = Tp.mm(eye - Tp)
+            edge_index_t, edge_weight_t = GDC().sparsify_dense(filter_t, method='threshold', eps=eps*(i/(i+1)))
             edge_index_t, edge_weight_t = coalesce(edge_index_t, edge_weight_t, nm_nodes, nm_nodes)
-            edge_index, edge_weight = self.transition_matrix(edge_index_t, edge_weight_t, nm_nodes, normalization='sym')
+            edge_index_t, edge_weight_t = self.transition_matrix(edge_index_t, edge_weight_t, nm_nodes, normalization='sym')
             edge_index_T.append(edge_index_t)
             edge_weight_T.append(edge_weight_t)
-        edge_index_T = torch.stack(edge_index_T)
-        edge_weight_T = torch.stack(edge_weight_T)
+        #edge_index_T = torch.stack(edge_index_T)
+        #edge_weight_T = torch.stack(edge_weight_T)
         return edge_index_T, edge_weight_T
 
     def forward(self, edge_index, edge_weight):
