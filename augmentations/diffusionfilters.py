@@ -86,7 +86,7 @@ class DiffusionAugmentation(nn.Module):
         edge_index_0, edge_weight_0 = self.transition_matrix(edge_index_0, edge_weight_0, nm_nodes, normalization='sym')
         edge_index_T = [edge_index_t]
         edge_weight_T = [edge_weight_t]
-0        for i in range(self.nm_scale):
+0       for i in range(self.nm_scale):
             dilation = 2**(i-1)
             Tp = torch.matrix_power(T, dilation)
             filter_t = Lp.mm(eye - Tp)
