@@ -138,44 +138,47 @@ def main():
     results_path = '/disk/scratch1/asif/workspace/graphNCE/modelsDWT/'
     if not os.path.exists(results_path):
         os.makedirs(results_path)
-    results = {'Cora': {'F1Ma':None, 'F1Mi':None}, 
-                    'Citeseer': {'F1Ma':None, 'F1Mi':None}, 
-                        'PubMed': {'F1Ma':None, 'F1Mi':None}}
+
     for dataname in datasets:
         print(f'Training for Dataset {dataname}')
+        
+        seed = start_seed + i
+        torch.manual_seed(seed)
+        np.random.seed(seed)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+        path = osp.join(osp.expanduser('~'), 'datasets')
+        dataset = Planetoid(path, name=dataname, transform=T.NormalizeFeatures())
+        data = dataset[0]
+        gconv1 = GConv(input_dim=dataset.num_features, hidden_dim=512, num_layers=2)
+        gconv2 = GConvMultiScale(input_dim=dataset.num_features, hidden_dim=512, num_layers=2, nm_scale=8)
+        encoder_model = Encoder(encoder1=gconv1, encoder2=gconv2, hidden_dim=512, device_ids=device_ids)
+        contrast_model = DualBranchContrast(loss=L.JSD(), mode='G2L').to(device_ids['contrast'])
+
+        optimizer = Adam(encoder_model.parameters(), lr=0.001)
+
+        with tqdm(total=300, desc='(T)') as pbar:
+            for epoch in range(1, 301):
+                loss = train(encoder_model, contrast_model, data, optimizer)
+                pbar.set_postfix({'loss': loss})
+                pbar.update()
+
+        results = {'Cora': {'F1Ma':None, 'F1Mi':None}, 
+                        'Citeseer': {'F1Ma':None, 'F1Mi':None}, 
+                            'PubMed': {'F1Ma':None, 'F1Mi':None}}
+
+        torch.save({'encoder1':gconv1.state_dict(), 'encoder2':gconv2.state_dict(), 
+                       'contrast':contrast_model.state_dict(),'optim':optimizer.state_dict()}, f'{results_path}/model.pt')
         F1Ma, F1Mi = [], []
         for i in range(nm_trials):
-            seed = start_seed + i
-            torch.manual_seed(seed)
-            np.random.seed(seed)
-            torch.backends.cudnn.deterministic = True
-            torch.backends.cudnn.benchmark = False
-            path = osp.join(osp.expanduser('~'), 'datasets')
-            dataset = Planetoid(path, name=dataname, transform=T.NormalizeFeatures())
-            data = dataset[0]
-            gconv1 = GConv(input_dim=dataset.num_features, hidden_dim=512, num_layers=2)
-            gconv2 = GConvMultiScale(input_dim=dataset.num_features, hidden_dim=512, num_layers=2, nm_scale=8)
-            encoder_model = Encoder(encoder1=gconv1, encoder2=gconv2, hidden_dim=512, device_ids=device_ids)
-            contrast_model = DualBranchContrast(loss=L.JSD(), mode='G2L').to(device_ids['contrast'])
-
-            optimizer = Adam(encoder_model.parameters(), lr=0.001)
-
-            with tqdm(total=300, desc='(T)') as pbar:
-                for epoch in range(1, 301):
-                    loss = train(encoder_model, contrast_model, data, optimizer)
-                    pbar.set_postfix({'loss': loss})
-                    pbar.update()
-
             test_result = test(encoder_model, data)
             F1Ma.append(test_result["macro_f1"])
             F1Mi.append(test_result["micro_f1"])
-
             print(f'(E): Trial= {i+1} Best test Accuracy={test_result["micro_f1"]:.4f}, F1Ma={test_result["macro_f1"]:.4f}')
-            torch.save({'encoder1':gconv1.state_dict(), 'encoder2':gconv2.state_dict(), 
-                            'contrast':contrast_model.state_dict(),'optim':optimizer.state_dict()}, f'{results_path}/model_trial{i+1}.pt')
 
-        F1Ma = np.array(F1Ma)
-        F1Mi = np.array(F1Mi)
+            F1Ma = np.array(F1Ma)
+            F1Mi = np.array(F1Mi)
+            
         print(f'Data {dataname} Mean F1Ma= {F1Ma.mean()} Std F1Ma={F1Ma.std()}')
         print(f'Data {dataname} Mean Acc= {F1Mi.mean()} Std Acc={F1Mi.std()}')
         results[dataname]['F1Ma'] = F1Ma
