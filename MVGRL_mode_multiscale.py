@@ -132,19 +132,18 @@ def main():
     results_path = '/disk/scratch1/asif/workspace/graphNCE/modelsDWT/'
     if not os.path.exists(results_path):
         os.makedirs(results_path)
-    results = {'Cora': {'F1Ma':None, 'F1Mi':None, 'Acc':None}, 
-                    'Citeseer': {'F1Ma':None, 'F1Mi':None, 'Acc':None}, 
-                        'PubMed': {'F1Ma':None, 'F1Mi':None, 'Acc':None}}
+    results = {'Cora': {'F1Ma':None, 'F1Mi':None}, 
+                    'Citeseer': {'F1Ma':None, 'F1Mi':None}, 
+                        'PubMed': {'F1Ma':None, 'F1Mi':None}}
     for dataname in datasets:
         print(f'Training for Dataset {dataname}')
-        F1Ma, F1Mi, acc = [], [], []
+        F1Ma, F1Mi = [], []
         for i in range(nm_trials):
             seed = start_seed + i
             torch.manual_seed(seed)
             np.random.seed(seed)
             torch.backends.cudnn.deterministic = True
             torch.backends.cudnn.benchmark = False
-            device = torch.device('cuda:7')
             path = osp.join(osp.expanduser('~'), 'datasets')
             dataset = Planetoid(path, name=dataname, transform=T.NormalizeFeatures())
             data = dataset[0]
@@ -164,21 +163,17 @@ def main():
             test_result = test(encoder_model, data)
             F1Ma.append(test_result["macro_f1"])
             F1Mi.append(test_result["micro_f1"])
-            acc.append(test_result["acc"])
 
-            print(f'(E): Trial= {i+1} Best test F1Mi={test_result["micro_f1"]:.4f}, F1Ma={test_result["macro_f1"]:.4f}, Acc={test_result["acc"]}')
+            print(f'(E): Trial= {i+1} Best test Accuracy={test_result["micro_f1"]:.4f}, F1Ma={test_result["macro_f1"]:.4f}')
             torch.save({'encoder1':gconv1.state_dict(), 'encoder2':gconv2.state_dict(), 
-                            'contrast':contrast_model.state_dict(),'optim':optimizer.state_dict()}, f'{results_path}/model200.pt')
+                            'contrast':contrast_model.state_dict(),'optim':optimizer.state_dict()}, f'{results_path}/model_trial{i+1}.pt')
 
         F1Ma = np.array(F1Ma)
         F1Mi = np.array(F1Mi)
-        acc = np.array(acc)
         print(f'Data {dataname} Mean F1Ma= {F1Ma.mean()} Std F1Ma={F1Ma.std()}')
-        print(f'Data {dataname} Mean F1Mi= {F1Mi.mean()} Std F1Mi={F1Mi.std()}')
-        print(f'Data {dataname} Mean Acc= {acc.mean()} Std Acc={acc.std()}')
+        print(f'Data {dataname} Mean Acc= {F1Mi.mean()} Std Acc={F1Mi.std()}')
         results[dataname]['F1Ma'] = F1Ma
         results[dataname]['F1Mi'] = F1Mi
-        results[dataname]['Acc'] = acc
     with open(f'{results_path}DWTmetrics.yaml', 'w') as f:
         yaml.dump(results)
 
