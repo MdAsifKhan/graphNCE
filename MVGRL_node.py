@@ -13,7 +13,7 @@ from torch_geometric.nn import GCNConv
 from torch_geometric.nn.inits import uniform
 from torch_geometric.datasets import Planetoid
 import numpy as np
-
+import os
 class GConv(nn.Module):
     def __init__(self, input_dim, hidden_dim, num_layers):
         super(GConv, self).__init__()
@@ -34,12 +34,13 @@ class GConv(nn.Module):
 
 
 class Encoder(torch.nn.Module):
-    def __init__(self, encoder1, encoder2, augmentor, hidden_dim):
+    def __init__(self, encoder1, encoder2, augmentor, hidden_dim, device_ids=[0,1,2,3]):
         super(Encoder, self).__init__()
-        self.encoder1 = encoder1
-        self.encoder2 = encoder2
+        self.encoder1 = encoder1.to(device_ids['encoder1'])
+        self.encoder2 = encoder2.to(device_ids['encoder2'])
         self.augmentor = augmentor
-        self.project = torch.nn.Linear(hidden_dim, hidden_dim)
+        self.device_ids = device_ids
+        self.project = torch.nn.Linear(hidden_dim, hidden_dim).to(device_ids['projector'])
         uniform(hidden_dim, self.project.weight)
 
     @staticmethod
@@ -50,14 +51,18 @@ class Encoder(torch.nn.Module):
         aug1, aug2 = self.augmentor
         x1, edge_index1, edge_weight1 = aug1(x, edge_index, edge_weight)
         x2, edge_index2, edge_weight2 = aug2(x, edge_index, edge_weight)
-        z1 = self.encoder1(x1, edge_index1, edge_weight1)
-        z2 = self.encoder2(x2, edge_index2, edge_weight2)
-        g1 = self.project(torch.sigmoid(z1.mean(dim=0, keepdim=True)))
-        g2 = self.project(torch.sigmoid(z2.mean(dim=0, keepdim=True)))
-        z1n = self.encoder1(*self.corruption(x1, edge_index1, edge_weight1))
-        z2n = self.encoder2(*self.corruption(x2, edge_index2, edge_weight2))
-        return z1, z2, g1, g2, z1n, z2n
+        if edge_weight1 is not None:
+            edge_weight1 = edge_weight1.to(self.device_ids['encoder1'])
+        if edge_weight2 is not None:
+            edge_weight2 = edge_weight2.to(self.device_ids['encoder2'])
 
+        z1 = self.encoder1(x1.to(self.device_ids['encoder1']), edge_index1.to(self.device_ids['encoder1']), edge_weight1)
+        z2 = self.encoder2(x2.to(self.device_ids['encoder2']), edge_index2.to(self.device_ids['encoder2']), edge_weight2)
+        g1 = self.project(torch.sigmoid(z1.mean(dim=0, keepdim=True)).to(self.device_ids['projector']))
+        g2 = self.project(torch.sigmoid(z2.mean(dim=0, keepdim=True)).to(self.device_ids['projector']))
+        z1n = self.encoder1(*self.corruption(x1.to(self.device_ids['encoder1']), edge_index1.to(self.device_ids['encoder1']), edge_weight1))
+        z2n = self.encoder2(*self.corruption(x2.to(self.device_ids['encoder2']), edge_index2.to(self.device_ids['encoder2']), edge_weight2))
+        return z1.to(self.device_ids['contrast']), z2.to(self.device_ids['contrast']), g1.to(self.device_ids['contrast']), g2.to(self.device_ids['contrast']), z1n.to(self.device_ids['contrast']), z2n.to(self.device_ids['contrast'])
 
 def train(encoder_model, contrast_model, data, optimizer):
     encoder_model.train()
@@ -81,34 +86,67 @@ def test(encoder_model, data):
 
 
 def main():
-    seed = 42
-    torch.manual_seed(seed)
-    np.random.seed(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
-    device = torch.device('cuda:7')
-    path = osp.join(osp.expanduser('~'), 'datasets')
-    dataset = Planetoid(path, name='Cora', transform=T.NormalizeFeatures())
-    data = dataset[0].to(device)
+    #datasets = ['Cora', 'Citeseer', 'PubMed']
+    datasets = ['Cora']
+    device_ids = {'data':0, 'encoder1':0, 'encoder2':1, 'projector':2, 'contrast':3}
+    start_seed = 42
+    nm_trials = 50
+    results_path = '/disk/scratch1/asif/workspace/graphNCE/modelsMVGRL/'
+    if not os.path.exists(results_path):
+        os.makedirs(results_path)
+    results = {'Cora': {'F1Ma':None, 'F1Mi':None, 'Acc':None}, 
+                    'Citeseer': {'F1Ma':None, 'F1Mi':None, 'Acc':None}, 
+                        'PubMed': {'F1Ma':None, 'F1Mi':None, 'Acc':None}}
 
-    aug1 = A.Identity()
-    aug2 = A.PPRDiffusion(alpha=0.2)
-    gconv1 = GConv(input_dim=dataset.num_features, hidden_dim=512, num_layers=2).to(device)
-    gconv2 = GConv(input_dim=dataset.num_features, hidden_dim=512, num_layers=2).to(device)
-    encoder_model = Encoder(encoder1=gconv1, encoder2=gconv2, augmentor=(aug1, aug2), hidden_dim=512).to(device)
-    contrast_model = DualBranchContrast(loss=L.JSD(), mode='G2L').to(device)
+    for dataname in datasets:
+        print(f'Training for Dataset {dataname}')
+        F1Ma, F1Mi, acc = [], [], []
+        for i in range(nm_trials):
+            seed = start_seed + i
+            torch.manual_seed(seed)
+            np.random.seed(seed)
+            torch.backends.cudnn.deterministic = True
+            torch.backends.cudnn.benchmark = False
 
-    optimizer = Adam(encoder_model.parameters(), lr=0.001)
+            path = osp.join(osp.expanduser('~'), 'datasets')
+            dataset = Planetoid(path, name=dataname, transform=T.NormalizeFeatures())
+            data = dataset[0]
 
-    with tqdm(total=200, desc='(T)') as pbar:
-        for epoch in range(1, 201):
-            loss = train(encoder_model, contrast_model, data, optimizer)
-            pbar.set_postfix({'loss': loss})
-            pbar.update()
+            aug1 = A.Identity()
+            aug2 = A.PPRDiffusion(alpha=0.2)
+            gconv1 = GConv(input_dim=dataset.num_features, hidden_dim=512, num_layers=2)
+            gconv2 = GConv(input_dim=dataset.num_features, hidden_dim=512, num_layers=2)
+            encoder_model = Encoder(encoder1=gconv1, encoder2=gconv2, augmentor=(aug1, aug2), hidden_dim=512, device_ids=device_ids)
+            contrast_model = DualBranchContrast(loss=L.JSD(), mode='G2L').to(device_ids['contrast'])
 
-    test_result = test(encoder_model, data)
-    print(f'(E): Best test F1Mi={test_result["micro_f1"]:.4f}, F1Ma={test_result["macro_f1"]:.4f}, Acc={test_result["acc"]:.4f}')
+            optimizer = Adam(encoder_model.parameters(), lr=0.001)
 
+            with tqdm(total=300, desc='(T)') as pbar:
+                for epoch in range(1, 301):
+                    loss = train(encoder_model, contrast_model, data, optimizer)
+                    pbar.set_postfix({'loss': loss})
+                    pbar.update()
+
+            test_result = test(encoder_model, data)
+            F1Ma.append(test_result["macro_f1"])
+            F1Mi.append(test_result["micro_f1"])
+            acc.append(test_result["acc"])
+
+            print(f'(E): Trial= {i+1} Best test F1Mi={test_result["micro_f1"]:.4f}, F1Ma={test_result["macro_f1"]:.4f}, Acc={test_result["acc"]}')
+            torch.save({'encoder1':gconv1.state_dict(), 'encoder2':gconv2.state_dict(), 
+                            'contrast':contrast_model.state_dict(),'optim':optimizer.state_dict()}, f'{results_path}/model_trial{i}.pt')
+
+        F1Ma = np.array(F1Ma)
+        F1Mi = np.array(F1Mi)
+        acc = np.array(acc)
+        print(f'Data {dataname} Mean F1Ma= {F1Ma.mean()} Std F1Ma={F1Ma.std()}')
+        print(f'Data {dataname} Mean F1Mi= {F1Mi.mean()} Std F1Mi={F1Mi.std()}')
+        print(f'Data {dataname} Mean Acc= {acc.mean()} Std Acc={acc.std()}')
+        results[dataname]['F1Ma'] = F1Ma
+        results[dataname]['F1Mi'] = F1Mi
+        results[dataname]['Acc'] = acc
+    with open(f'{results_path}MVGRLmetrics.yaml', 'w') as f:
+        yaml.dump(results)
 
 if __name__ == '__main__':
     main()
