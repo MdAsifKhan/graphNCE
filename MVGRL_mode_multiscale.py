@@ -128,7 +128,7 @@ def main():
     datasets = ['Cora']
     device_ids = {'data':0, 'encoder1':0, 'encoder2':1, 'projector':0, 'contrast':2}
     start_seed = 42
-    nm_trials = 50
+    nm_trials = 1
     results_path = '/disk/scratch1/asif/workspace/graphNCE/modelsDWT/'
     if not os.path.exists(results_path):
         os.makedirs(results_path)
@@ -155,8 +155,8 @@ def main():
 
             optimizer = Adam(encoder_model.parameters(), lr=0.001)
 
-            with tqdm(total=200, desc='(T)') as pbar:
-                for epoch in range(1, 201):
+            with tqdm(total=300, desc='(T)') as pbar:
+                for epoch in range(1, 301):
                     loss = train(encoder_model, contrast_model, data, optimizer)
                     pbar.set_postfix({'loss': loss})
                     pbar.update()
