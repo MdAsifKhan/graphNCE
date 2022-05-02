@@ -14,6 +14,8 @@ from torch_geometric.nn.inits import uniform
 from torch_geometric.datasets import Planetoid
 import numpy as np
 import os
+import yaml
+
 class GConv(nn.Module):
     def __init__(self, input_dim, hidden_dim, num_layers):
         super(GConv, self).__init__()
@@ -142,7 +144,7 @@ def main():
         results[dataname]['F1Ma'] = F1Ma
         results[dataname]['F1Mi'] = F1Mi
     with open(f'{results_path}MVGRLmetrics.yaml', 'w') as f:
-        yaml.dump(results)
+        yaml.dump(results, f)
 
 if __name__ == '__main__':
     main()

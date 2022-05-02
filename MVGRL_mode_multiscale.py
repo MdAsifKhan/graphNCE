@@ -44,7 +44,7 @@ class GConvMultiScale(nn.Module):
         self.aug = DiffusionAugmentation(nm_scale)
         self.activation = nn.PReLU(hidden_dim)
         #self.mixingdistn = Dirichlet(torch.tensor([0.5]*self.nm_scale))
-        self.mixing = nn.Parameter(torch.ones(self.nm_scale, 1)*(1.0/nm_scale), requires_grad=False)
+        self.mixing = nn.Parameter(torch.ones(self.nm_scale, 1)*(1.0/nm_scale), requires_grad=True)
         for i in range(num_layers):
             if i == 0:
                 self.layers.append(GCNConv(input_dim, hidden_dim))
@@ -60,7 +60,7 @@ class GConvMultiScale(nn.Module):
 
     def forward(self, x, edge_index, edge_weight=None):
         edge_index_T, edge_weight_T = self.aug(edge_index, edge_weight)
-        idx = torch.randint(0, self.nm_scale, (1,))
+        #idx = torch.randint(0, self.nm_scale, (1,))
         #import pdb
         #pdb.set_trace()
         features_T = []
@@ -73,7 +73,7 @@ class GConvMultiScale(nn.Module):
         #import pdb
         #pdb.set_trace()
         features = torch.einsum('t n j, t -> n j', features_T, coeff.squeeze())
-        return features, edge_index_T[1], edge_weight_T[1]
+        return features, edge_index_T, edge_weight_T
 
 class Encoder(torch.nn.Module):
     def __init__(self, encoder1, encoder2, hidden_dim, nm_scale=8, device_ids=[0,1,2,3]):
@@ -100,7 +100,13 @@ class Encoder(torch.nn.Module):
         #z2 = self.encoder2(x2, edge_index2, edge_weight2)
         g1 = self.project(torch.sigmoid(z1.mean(dim=0, keepdim=True)).to(self.device_ids['projector']))
         g2 = self.project(torch.sigmoid(z2.mean(dim=0, keepdim=True)).to(self.device_ids['projector']))
-        z2n = self.encoder2.features(*self.corruption(x.to(self.device_ids['encoder2']), edge_index2, edge_weight2))
+        z2n = []
+        for t in range(self.nm_scale):
+            z2n_t = self.encoder2.features(*self.corruption(x.to(self.device_ids['encoder2']), edge_index2[t], edge_weight2[t]))
+            z2n.append(z2n_t)
+        z2n = torch.stack(z2n)
+        coeff = torch.softmax(self.encoder2.mixing, 0)
+        z2n = torch.einsum('t n j, t -> n j', z2n, coeff.squeeze())
         return z1.to(self.device_ids['contrast']), z2.to(self.device_ids['contrast']), g1.to(self.device_ids['contrast']), g2.to(self.device_ids['contrast']), z1n.to(self.device_ids['contrast']), z2n.to(self.device_ids['contrast'])
 
 
@@ -126,9 +132,9 @@ def test(encoder_model, data):
 def main():
     #datasets = ['Cora', 'Citeseer', 'PubMed']
     datasets = ['Cora']
-    device_ids = {'data':0, 'encoder1':0, 'encoder2':1, 'projector':0, 'contrast':2}
+    device_ids = {'data':3, 'encoder1':3, 'encoder2':4, 'projector':3, 'contrast':5}
     start_seed = 42
-    nm_trials = 1
+    nm_trials = 50
     results_path = '/disk/scratch1/asif/workspace/graphNCE/modelsDWT/'
     if not os.path.exists(results_path):
         os.makedirs(results_path)
@@ -175,7 +181,7 @@ def main():
         results[dataname]['F1Ma'] = F1Ma
         results[dataname]['F1Mi'] = F1Mi
     with open(f'{results_path}DWTmetrics.yaml', 'w') as f:
-        yaml.dump(results)
+        yaml.dump(results, f)
 
 if __name__ == '__main__':
     main()
