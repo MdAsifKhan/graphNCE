@@ -98,7 +98,7 @@ class DiffusionAugmentation(nn.Module):
             dilation = 2**(i-1)
             Tp = torch.matrix_power(T, dilation)
             filter_t = Tp.mm(eye - Tp)
-            edge_index_t, edge_weight_t = GDC().sparsify_dense(filter_t, method='threshold', eps=eps*(i/(i+1)))
+            edge_index_t, edge_weight_t = GDC().sparsify_dense(filter_t, method='threshold', eps=eps)
             edge_index_t, edge_weight_t = coalesce(edge_index_t, edge_weight_t, nm_nodes, nm_nodes)
             edge_index_t, edge_weight_t = self.transition_matrix(edge_index_t, edge_weight_t, nm_nodes, normalization='sym')
             edge_index_T.append(edge_index_t)

@@ -16,7 +16,7 @@ from augmentations.diffusionfilters import DiffusionAugmentation
 from torch.distributions.dirichlet import Dirichlet
 import numpy as np
 import yaml
-
+import os
 class GConv(nn.Module):
     def __init__(self, input_dim, hidden_dim, num_layers):
         super(GConv, self).__init__()
@@ -44,7 +44,7 @@ class GConvMultiScale(nn.Module):
         self.aug = DiffusionAugmentation(nm_scale)
         self.activation = nn.PReLU(hidden_dim)
         #self.mixingdistn = Dirichlet(torch.tensor([0.5]*self.nm_scale))
-        self.mixing = nn.Parameter(torch.ones(self.nm_scale, 1)*(1/self.nm_scale), requires_grad=True)
+        self.mixing = nn.Parameter(torch.ones(self.nm_scale, 1)*(1.0/nm_scale), requires_grad=False)
         for i in range(num_layers):
             if i == 0:
                 self.layers.append(GCNConv(input_dim, hidden_dim))
@@ -60,7 +60,7 @@ class GConvMultiScale(nn.Module):
 
     def forward(self, x, edge_index, edge_weight=None):
         edge_index_T, edge_weight_T = self.aug(edge_index, edge_weight)
-        t = torch.randint(0, self.nm_scale, (1,))
+        idx = torch.randint(0, self.nm_scale, (1,))
         #import pdb
         #pdb.set_trace()
         features_T = []
@@ -73,7 +73,7 @@ class GConvMultiScale(nn.Module):
         #import pdb
         #pdb.set_trace()
         features = torch.einsum('t n j, t -> n j', features_T, coeff.squeeze())
-        return features, edge_index_T[t], edge_weight_T[t]
+        return features, edge_index_T[1], edge_weight_T[1]
 
 class Encoder(torch.nn.Module):
     def __init__(self, encoder1, encoder2, hidden_dim, nm_scale=8, device_ids=[0,1,2,3]):
@@ -91,17 +91,17 @@ class Encoder(torch.nn.Module):
 
     def forward(self, x, edge_index, edge_weight=None):
         if edge_weight is not None:
-            edge_weight = edge_weight.to(device_ids['encoder1'])
-        z1 = self.encoder1(x.to(device_ids['encoder1']), edge_index.to(device_ids['encoder1']), edge_weight)
-        z1n = self.encoder1(*self.corruption(x, edge_index, edge_weight))
+            edge_weight = edge_weight.to(self.device_ids['encoder1'])
+        z1 = self.encoder1(x.to(self.device_ids['encoder1']), edge_index.to(self.device_ids['encoder1']), edge_weight)
+        z1n = self.encoder1(*self.corruption(x.to(self.device_ids['encoder1']), edge_index.to(self.device_ids['encoder1']), edge_weight))
         if edge_weight is not None:
-            edge_weight = edge_weight.to(device_ids['encoder2'])
-        z2, edge_index2, edge_weight2 = self.encoder2(x.to(device_ids['encoder2']), edge_index.to(device_ids['encoder2']), edge_weight)
+            edge_weight = edge_weight.to(self.device_ids['encoder2'])
+        z2, edge_index2, edge_weight2 = self.encoder2(x.to(self.device_ids['encoder2']), edge_index.to(self.device_ids['encoder2']), edge_weight)
         #z2 = self.encoder2(x2, edge_index2, edge_weight2)
-        g1 = self.project(torch.sigmoid(z1.mean(dim=0, keepdim=True)).to(device_ids['projector']))
-        g2 = self.project(torch.sigmoid(z2.mean(dim=0, keepdim=True)).to(device_ids['projector']))
-        z2n = self.encoder2.features(*self.corruption(x.to(device_ids['encoder2']), edge_index2, edge_weight2))
-        return z1.to(device_ids['contrast']), z2.to(device_ids['contrast']), g1.to(device_ids['contrast']), g2.to(device_ids['contrast']), z1n.to(device_ids['contrast']), z2n.to(device_ids['contrast'])
+        g1 = self.project(torch.sigmoid(z1.mean(dim=0, keepdim=True)).to(self.device_ids['projector']))
+        g2 = self.project(torch.sigmoid(z2.mean(dim=0, keepdim=True)).to(self.device_ids['projector']))
+        z2n = self.encoder2.features(*self.corruption(x.to(self.device_ids['encoder2']), edge_index2, edge_weight2))
+        return z1.to(self.device_ids['contrast']), z2.to(self.device_ids['contrast']), g1.to(self.device_ids['contrast']), g2.to(self.device_ids['contrast']), z1n.to(self.device_ids['contrast']), z2n.to(self.device_ids['contrast'])
 
 
 def train(encoder_model, contrast_model, data, optimizer):
@@ -114,7 +114,7 @@ def train(encoder_model, contrast_model, data, optimizer):
     return loss.item()
 
 
-def test(encoder_model, data, device_ids):
+def test(encoder_model, data):
     encoder_model.eval()
     z1, z2, _, _, _, _ = encoder_model(data.x, data.edge_index)
     z = z1 + z2
@@ -124,8 +124,9 @@ def test(encoder_model, data, device_ids):
 
 
 def main():
-    datasets = ['Cora', 'Citeseer', 'PubMed']
-    device_ids = {'data':0, 'encoder1':0, 'encoder2':1, 'projector':2, 'contrast':3}
+    #datasets = ['Cora', 'Citeseer', 'PubMed']
+    datasets = ['Cora']
+    device_ids = {'data':0, 'encoder1':0, 'encoder2':1, 'projector':0, 'contrast':2}
     start_seed = 42
     nm_trials = 50
     results_path = '/disk/scratch1/asif/workspace/graphNCE/modelsDWT/'
@@ -134,8 +135,8 @@ def main():
     results = {'Cora': {'F1Ma':None, 'F1Mi':None, 'Acc':None}, 
                     'Citeseer': {'F1Ma':None, 'F1Mi':None, 'Acc':None}, 
                         'PubMed': {'F1Ma':None, 'F1Mi':None, 'Acc':None}}
-    for data in datasets:
-        print(f'Training for Dataset {data}')
+    for dataname in datasets:
+        print(f'Training for Dataset {dataname}')
         F1Ma, F1Mi, acc = [], [], []
         for i in range(nm_trials):
             seed = start_seed + i
@@ -145,7 +146,7 @@ def main():
             torch.backends.cudnn.benchmark = False
             device = torch.device('cuda:7')
             path = osp.join(osp.expanduser('~'), 'datasets')
-            dataset = Planetoid(path, name=data, transform=T.NormalizeFeatures())
+            dataset = Planetoid(path, name=dataname, transform=T.NormalizeFeatures())
             data = dataset[0]
             gconv1 = GConv(input_dim=dataset.num_features, hidden_dim=512, num_layers=2)
             gconv2 = GConvMultiScale(input_dim=dataset.num_features, hidden_dim=512, num_layers=2, nm_scale=8)
@@ -165,19 +166,19 @@ def main():
             F1Mi.append(test_result["micro_f1"])
             acc.append(test_result["acc"])
 
-            print(f'(E): Trial= {i+1} Best test F1Mi={test_result["micro_f1"]:.4f}, F1Ma={test_result["macro_f1"]:.4f}, Acc={test_result["accuracy"]}')
+            print(f'(E): Trial= {i+1} Best test F1Mi={test_result["micro_f1"]:.4f}, F1Ma={test_result["macro_f1"]:.4f}, Acc={test_result["acc"]}')
             torch.save({'encoder1':gconv1.state_dict(), 'encoder2':gconv2.state_dict(), 
                             'contrast':contrast_model.state_dict(),'optim':optimizer.state_dict()}, f'{results_path}/model200.pt')
 
         F1Ma = np.array(F1Ma)
         F1Mi = np.array(F1Mi)
         acc = np.array(acc)
-        print(f'Data {data} Mean F1Ma= {F1Ma.mean()} Std F1Ma={F1Ma.std()}')
-        print(f'Data {data} Mean F1Mi= {F1Mi.mean()} Std F1Mi={F1Mi.std()}')
-        print(f'Data {data} Mean Acc= {acc.mean()} Std Acc={acc.std()}')
-        results[data]['F1Ma'] = F1Ma
-        results[data]['F1Mi'] = F1Mi
-        results[data]['Acc'] = acc
+        print(f'Data {dataname} Mean F1Ma= {F1Ma.mean()} Std F1Ma={F1Ma.std()}')
+        print(f'Data {dataname} Mean F1Mi= {F1Mi.mean()} Std F1Mi={F1Mi.std()}')
+        print(f'Data {dataname} Mean Acc= {acc.mean()} Std Acc={acc.std()}')
+        results[dataname]['F1Ma'] = F1Ma
+        results[dataname]['F1Mi'] = F1Mi
+        results[dataname]['Acc'] = acc
     with open(f'{results_path}DWTmetrics.yaml', 'w') as f:
         yaml.dump(results)
 
