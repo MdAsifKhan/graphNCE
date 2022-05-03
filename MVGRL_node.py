@@ -7,7 +7,7 @@ import torch_geometric.transforms as T
 from torch import nn
 from tqdm import tqdm
 from torch.optim import Adam
-from GCL.eval import get_split, LREvaluator
+from GCL.eval import get_split, from_predefined_split, LREvaluator
 from GCL.models import DualBranchContrast
 from torch_geometric.nn import GCNConv
 from torch_geometric.nn.inits import uniform
@@ -82,14 +82,15 @@ def test(encoder_model, data):
     encoder_model.eval()
     z1, z2, _, _, _, _ = encoder_model(data.x, data.edge_index)
     z = z1 + z2
-    split = get_split(num_samples=z.size()[0], train_ratio=0.1, test_ratio=0.8)
+    #split = get_split(num_samples=z.size()[0], train_ratio=0.1, test_ratio=0.8)
+    split = from_predefined_split(data)
     result = LREvaluator()(z, data.y, split)
     return result
 
 
 def main():
-    #datasets = ['Cora', 'Citeseer', 'PubMed']
-    datasets = ['PubMed']
+    datasets = ['Cora', 'Citeseer', 'PubMed']
+    #datasets = ['PubMed']
     device_ids = {'data':0, 'encoder1':0, 'encoder2':1, 'projector':2, 'contrast':3}
     nm_trials = 50
     results_path = '/disk/scratch1/asif/workspace/graphNCE/modelsMVGRL/'
@@ -101,18 +102,18 @@ def main():
 
     for dataname in datasets:
         print(f'Training for Dataset {dataname}')
-        seed = 42
-        torch.manual_seed(seed)
-        np.random.seed(seed)
-        torch.backends.cudnn.deterministic = True
-        torch.backends.cudnn.benchmark = False
+        #seed = 42
+        #torch.manual_seed(seed)
+        #np.random.seed(seed)
+        #torch.backends.cudnn.deterministic = True
+        #torch.backends.cudnn.benchmark = False
 
         path = osp.join(osp.expanduser('~'), 'datasets')
         dataset = Planetoid(path, name=dataname, transform=T.NormalizeFeatures())
         data = dataset[0]
 
         aug1 = A.Identity()
-        aug2 = A.PPRDiffusion(alpha=0.2, eps=1e-2)
+        aug2 = A.PPRDiffusion(alpha=0.2, eps=1e-3)
         gconv1 = GConv(input_dim=dataset.num_features, hidden_dim=512, num_layers=2)
         gconv2 = GConv(input_dim=dataset.num_features, hidden_dim=512, num_layers=2)
         encoder_model = Encoder(encoder1=gconv1, encoder2=gconv2, augmentor=(aug1, aug2), hidden_dim=512, device_ids=device_ids)
