@@ -89,7 +89,7 @@ def test(encoder_model, data):
 
 def main():
     #datasets = ['Cora', 'Citeseer', 'PubMed']
-    datasets = ['Cora']
+    datasets = ['PubMed']
     device_ids = {'data':0, 'encoder1':0, 'encoder2':1, 'projector':2, 'contrast':3}
     nm_trials = 50
     results_path = '/disk/scratch1/asif/workspace/graphNCE/modelsMVGRL/'
@@ -101,7 +101,6 @@ def main():
 
     for dataname in datasets:
         print(f'Training for Dataset {dataname}')
-        F1Ma, F1Mi = [], []
         seed = 42
         torch.manual_seed(seed)
         np.random.seed(seed)
@@ -113,7 +112,7 @@ def main():
         data = dataset[0]
 
         aug1 = A.Identity()
-        aug2 = A.PPRDiffusion(alpha=0.2)
+        aug2 = A.PPRDiffusion(alpha=0.2, eps=1e-2)
         gconv1 = GConv(input_dim=dataset.num_features, hidden_dim=512, num_layers=2)
         gconv2 = GConv(input_dim=dataset.num_features, hidden_dim=512, num_layers=2)
         encoder_model = Encoder(encoder1=gconv1, encoder2=gconv2, augmentor=(aug1, aug2), hidden_dim=512, device_ids=device_ids)
@@ -128,21 +127,22 @@ def main():
                 pbar.update()
 
         torch.save({'encoder1':gconv1.state_dict(), 'encoder2':gconv2.state_dict(), 
-                        'contrast':contrast_model.state_dict(),'optim':optimizer.state_dict()}, f'{results_path}/model.pt')
+                        'contrast':contrast_model.state_dict(),'optim':optimizer.state_dict()}, f'{results_path}/model_{dataname}.pt')
+        F1Ma, F1Mi = [], []
         for i in range(nm_trials):
             test_result = test(encoder_model, data)
             F1Ma.append(test_result["macro_f1"])
             F1Mi.append(test_result["micro_f1"])
             print(f'(E): Trial= {i+1} Best test Accuracy={test_result["micro_f1"]:.4f}, F1Ma={test_result["macro_f1"]:.4f}')
 
-        F1Ma = np.array(F1Ma)
-        F1Mi = np.array(F1Mi)
-        print(f'Data {dataname} Mean F1Ma= {F1Ma.mean()} Std F1Ma={F1Ma.std()}')
-        print(f'Data {dataname} Mean Acc= {F1Mi.mean()} Std Acc={F1Mi.std()}')
-        results[dataname]['F1Ma'] = F1Ma
-        results[dataname]['F1Mi'] = F1Mi
-    with open(f'{results_path}MVGRLmetrics.yaml', 'w') as f:
-        yaml.dump(results, f)
+        #F1Ma = np.array(F1Ma)
+        #F1Mi = np.array(F1Mi)
+        print(f'Data {dataname} Mean F1Ma= {np.mean(F1Ma)} Std F1Ma={np.std(F1Ma)}')
+        print(f'Data {dataname} Mean Acc= {np.mean(F1Mi)} Std Acc={np.std(F1Mi)}')
+        results[dataname]['F1Ma'] = [f'{el:.4f}' for el in F1Ma]
+        results[dataname]['F1Mi'] = [f"{el:.4f}" for el in F1Mi]
+        with open(f'{results_path}MVGRLmetrics.yaml', 'w') as f:
+            yaml.dump(results, f)
 
 if __name__ == '__main__':
     main()

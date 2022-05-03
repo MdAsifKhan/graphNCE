@@ -37,11 +37,11 @@ class GConv(nn.Module):
 
 
 class GConvMultiScale(nn.Module):
-    def __init__(self, input_dim, hidden_dim, num_layers, nm_scale):
+    def __init__(self, input_dim, hidden_dim, num_layers, nm_scale, eps=1e-3):
         super(GConvMultiScale, self).__init__()
         self.layers = torch.nn.ModuleList()
         self.nm_scale = nm_scale
-        self.aug = DiffusionAugmentation(nm_scale)
+        self.aug = DiffusionAugmentation(nm_scale, eps=eps)
         self.activation = nn.PReLU(hidden_dim)
         #self.mixingdistn = Dirichlet(torch.tensor([0.5]*self.nm_scale))
         self.mixing = nn.Parameter(torch.ones(self.nm_scale, 1)*(1.0/nm_scale), requires_grad=True)
@@ -73,6 +73,7 @@ class GConvMultiScale(nn.Module):
         #import pdb
         #pdb.set_trace()
         features = torch.einsum('t n j, t -> n j', features_T, coeff.squeeze())
+        #features = features_T.mean(0)
         return features, edge_index_T, edge_weight_T
 
 class Encoder(torch.nn.Module):
@@ -107,6 +108,7 @@ class Encoder(torch.nn.Module):
         z2n = torch.stack(z2n)
         coeff = torch.softmax(self.encoder2.mixing, 0)
         z2n = torch.einsum('t n j, t -> n j', z2n, coeff.squeeze())
+        #z2n = z2n.mean(0)
         return z1.to(self.device_ids['contrast']), z2.to(self.device_ids['contrast']), g1.to(self.device_ids['contrast']), g2.to(self.device_ids['contrast']), z1n.to(self.device_ids['contrast']), z2n.to(self.device_ids['contrast'])
 
 
@@ -130,19 +132,20 @@ def test(encoder_model, data):
 
 
 def main():
-    #datasets = ['Cora', 'Citeseer', 'PubMed']
-    datasets = ['Cora']
-    device_ids = {'data':3, 'encoder1':3, 'encoder2':4, 'projector':3, 'contrast':5}
-    start_seed = 42
+    datasets = ['PubMed', 'Cora', 'Citeseer']
+    #datasets = ['PubMed']
+    device_ids = {'data':4, 'encoder1':5, 'encoder2':6, 'projector':7, 'contrast':4}
+    data_eps = {'PubMed':1e-2, 'Cora':1e-4, 'Citeseer':1e-5}
+    data_scales = {'PubMed': 4, 'Cora':8, 'Citeseer':8}
     nm_trials = 50
     results_path = '/disk/scratch1/asif/workspace/graphNCE/modelsDWT/'
     if not os.path.exists(results_path):
         os.makedirs(results_path)
 
+    results = {'Cora': {'F1Ma':None, 'F1Mi': None}, 'Citeseer':{'F1Ma':None, 'F1Mi': None}, 'PubMed':{'F1Ma':None, 'F1Mi': None}}
     for dataname in datasets:
-        print(f'Training for Dataset {dataname}')
-        
-        seed = start_seed + i
+        print(f'Training for Dataset {dataname}')        
+        seed = 42
         torch.manual_seed(seed)
         np.random.seed(seed)
         torch.backends.cudnn.deterministic = True
@@ -151,8 +154,8 @@ def main():
         dataset = Planetoid(path, name=dataname, transform=T.NormalizeFeatures())
         data = dataset[0]
         gconv1 = GConv(input_dim=dataset.num_features, hidden_dim=512, num_layers=2)
-        gconv2 = GConvMultiScale(input_dim=dataset.num_features, hidden_dim=512, num_layers=2, nm_scale=8)
-        encoder_model = Encoder(encoder1=gconv1, encoder2=gconv2, hidden_dim=512, device_ids=device_ids)
+        gconv2 = GConvMultiScale(input_dim=dataset.num_features, hidden_dim=512, num_layers=2, nm_scale=data_scales[dataname], eps=data_eps[dataname])
+        encoder_model = Encoder(encoder1=gconv1, encoder2=gconv2, hidden_dim=512, device_ids=device_ids, nm_scale=data_scales[dataname])
         contrast_model = DualBranchContrast(loss=L.JSD(), mode='G2L').to(device_ids['contrast'])
 
         optimizer = Adam(encoder_model.parameters(), lr=0.001)
@@ -163,12 +166,8 @@ def main():
                 pbar.set_postfix({'loss': loss})
                 pbar.update()
 
-        results = {'Cora': {'F1Ma':None, 'F1Mi':None}, 
-                        'Citeseer': {'F1Ma':None, 'F1Mi':None}, 
-                            'PubMed': {'F1Ma':None, 'F1Mi':None}}
-
         torch.save({'encoder1':gconv1.state_dict(), 'encoder2':gconv2.state_dict(), 
-                       'contrast':contrast_model.state_dict(),'optim':optimizer.state_dict()}, f'{results_path}/model.pt')
+                       'contrast':contrast_model.state_dict(),'optim':optimizer.state_dict()}, f'{results_path}/model_{dataname}.pt')
         F1Ma, F1Mi = [], []
         for i in range(nm_trials):
             test_result = test(encoder_model, data)
@@ -176,13 +175,13 @@ def main():
             F1Mi.append(test_result["micro_f1"])
             print(f'(E): Trial= {i+1} Best test Accuracy={test_result["micro_f1"]:.4f}, F1Ma={test_result["macro_f1"]:.4f}')
 
-            F1Ma = np.array(F1Ma)
-            F1Mi = np.array(F1Mi)
+        #F1Ma = np.array(F1Ma)
+        #F1Mi = np.array(F1Mi)
             
-        print(f'Data {dataname} Mean F1Ma= {F1Ma.mean()} Std F1Ma={F1Ma.std()}')
-        print(f'Data {dataname} Mean Acc= {F1Mi.mean()} Std Acc={F1Mi.std()}')
-        results[dataname]['F1Ma'] = F1Ma
-        results[dataname]['F1Mi'] = F1Mi
+        print(f'Data {dataname} Mean F1Ma= {np.mean(F1Ma)} Std F1Ma={np.std(F1Ma)}')
+        print(f'Data {dataname} Mean Acc= {np.mean(F1Mi)} Std Acc={np.std(F1Mi)}')
+        results[dataname]['F1Ma'] = [f'{el:.4f}' for el in F1Ma]
+        results[dataname]['F1Mi'] = [f'{el:.4f}' for el in F1Mi]
     with open(f'{results_path}DWTmetrics.yaml', 'w') as f:
         yaml.dump(results, f)
 
