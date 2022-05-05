@@ -134,10 +134,10 @@ class Encoder(torch.nn.Module):
 
 
 def main():
-    datasets = ['PubMed', 'Cora', 'Citeseer']
-    #datasets = ['PubMed']
-    device_ids = {'data':4, 'encoder1':5, 'encoder2':6, 'projector':7, 'contrast':4}
-    data_eps = {'PubMed':1e-2, 'Cora':1e-4, 'Citeseer':1e-5}
+    #datasets = ['PubMed', 'Cora', 'Citeseer']
+    datasets = ['Cora']
+    device_ids = {'data':0, 'encoder1':1, 'encoder2':2, 'projector':3, 'contrast':3}
+    data_eps = {'PubMed':1e-2, 'Cora':1e-5, 'Citeseer':1e-5}
     data_scales = {'PubMed': 4, 'Cora':8, 'Citeseer':8}
     nm_trials = 50
     results_path = '/disk/scratch1/asif/workspace/graphNCE/modelsDWT/'
@@ -149,17 +149,20 @@ def main():
         data = dataset[0]
         gconv1 = GConv(input_dim=dataset.num_features, hidden_dim=512, num_layers=2)
         gconv2 = GConvMultiScale(input_dim=dataset.num_features, hidden_dim=512, num_layers=2, nm_scale=data_scales[dataname], eps=data_eps[dataname])
-        encoder_model = Encoder(encoder1=gconv1, encoder2=gconv2, hidden_dim=512, device_ids=device_ids, nm_scale=data_scales[dataname])
+        state = torch.load(f'{results_path}/model_{dataname}.pt', map_location=torch.device('cpu'))
+        gconv1.load_state_dict(state['encoder1']) 
+        gconv2.load_state_dict(state['encoder2']) 
+        encoder_model = Encoder(encoder1=gconv1, encoder2=gconv2, input_dim=dataset.num_features, hidden_dim=512, device_ids=device_ids, nm_scale=data_scales[dataname])
         contrast_model = DualBranchContrast(loss=L.JSD(), mode='G2L').to(device_ids['contrast'])
 
-        checkpoint = torch.load(f'{results_path}/model_{dataname}.pt', map_location=device_ids['data'])
-        gconv1.load_state_dict(state['encoder1'])
-        gconv2.load_state_dict(state['encoder2'])
+        #state = torch.load(f'{results_path}/model_{dataname}.pt')
+        #encoder_model.encoder1.load_state_dict(state['encoder1'])
+        #encoder_model.encoder2.load_state_dict(state['encoder2'])
         contrast_model.load_state_dict(state['contrast'])
 
         encoder_model.eval()
         z1, z2, _, _, _, _ = encoder_model(data.x, data.edge_index)
-        z = z1 + z2.mean()
+        z = z1 + z2.mean(0)
         split = from_predefined_split(data)
 
         from sklearn.cluster import KMeans
@@ -167,10 +170,10 @@ def main():
 
         y = data.y
         km = KMeans(n_clusters=y.max().item()+1)
-        prediction = km.fit(z)
+        prediction = km.fit(z.detach().cpu().numpy())
         y_pred = prediction.labels_
         print(f'NMI Score {sklm.adjusted_mutual_info_score(y.cpu().numpy().reshape(-1), y_pred.reshape(-1))}')
-        print(f'ARI Score {sklm.adjusted_mutual_info_score(y.cpu().numpy().reshape(-1), y_pred.reshape(-1))}')
+        print(f'ARI Score {sklm.adjusted_rand_score(y.cpu().numpy().reshape(-1), y_pred.reshape(-1))}')
 
 if __name__ == '__main__':
     main()

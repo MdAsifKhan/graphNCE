@@ -9,6 +9,7 @@ from tqdm import tqdm
 from torch.optim import Adam
 from GCL.eval import get_split, from_predefined_split, LREvaluator
 from GCL.models import DualBranchContrast
+from GCL.augmentors.functional import drop_feature
 from torch_geometric.nn import GCNConv
 from torch_geometric.nn.inits import uniform
 from torch_geometric.datasets import Planetoid
@@ -37,11 +38,11 @@ class GConv(nn.Module):
 
 
 class GConvMultiScale(nn.Module):
-    def __init__(self, input_dim, hidden_dim, num_layers, nm_scale, eps=1e-3):
+    def __init__(self, input_dim, hidden_dim, num_layers):
         super(GConvMultiScale, self).__init__()
         self.layers = torch.nn.ModuleList()
-        self.nm_scale = nm_scale
-        self.aug = DiffusionAugmentation(nm_scale, eps=eps)
+        #self.nm_scale = nm_scale
+        #self.aug = DiffusionAugmentation(nm_scale, eps=eps)
         self.activation = nn.PReLU(hidden_dim)
         #self.mixingdistn = Dirichlet(torch.tensor([0.5]*self.nm_scale))
         #self.mixing = nn.Parameter(torch.ones(self.nm_scale, 1)*(1.0/nm_scale), requires_grad=True)
@@ -51,21 +52,30 @@ class GConvMultiScale(nn.Module):
             else:
                 self.layers.append(GCNConv(hidden_dim, hidden_dim))
 
-    def features(self, x, edge_index, edge_weight=None):
+    def features(self, x, edge_index, edge_weight=None, test=False):
         z = x
+        #if not test:
+        #    x = x + 0.01* torch.randn(*x.shape).to(x.device)
         for conv in self.layers:
             z = conv(z, edge_index, edge_weight)
             z = self.activation(z)
         return z
 
-    def forward(self, x, edge_index, edge_weight=None):
-        edge_index_T, edge_weight_T = self.aug(edge_index, edge_weight)
+    def forward(self, x, edge_index, edge_weight=None, test=False, device='cuda:0'):
+        #edge_index_T, edge_weight_T = self.aug(edge_index.to('cuda:0'), edge_weight.to('cuda:0'))
         #idx = torch.randint(0, self.nm_scale, (1,))
         #import pdb
         #pdb.set_trace()
+        nm_scale = len(edge_index)
         features_T = []
-        for t in range(self.nm_scale):
-            features_t = self.features(x, edge_index_T[t], edge_weight_T[t])
+        x = x.to(device)
+        for t in range(nm_scale):
+            #if not test:
+            #    x = x + 0.01* torch.randn(*x.shape).to(x.device)
+            #    x = drop_feature(x, 0.3)
+            if edge_weight[t] is not None:
+                edge_weight[t] = edge_weight[t].to(device)
+            features_t = self.features(x, edge_index[t].to(device), edge_weight[t], test)
             features_T.append(features_t)
         features_T = torch.stack(features_T)
         #coeff = self.mixingdistn.sample().to(x.device)
@@ -74,14 +84,15 @@ class GConvMultiScale(nn.Module):
         #pdb.set_trace()
         #features = torch.einsum('t n j, t -> n j', features_T, coeff.squeeze())
         #features = features_T.mean(0)
-        return features_T, edge_index_T, edge_weight_T
+        return features_T
 
 class Encoder(torch.nn.Module):
-    def __init__(self, encoder1, encoder2, input_dim, hidden_dim, nm_scale=8, device_ids=[0,1,2,3]):
+    def __init__(self, encoder1, encoder2, input_dim, hidden_dim, nm_scale=8, eps=1e-4, device_ids=[0,1,2,3]):
         super(Encoder, self).__init__()
         self.device_ids = device_ids
         self.encoder1 = encoder1.to(device_ids['encoder1'])
         self.encoder2 = encoder2.to(device_ids['encoder2'])
+        self.aug = DiffusionAugmentation(nm_scale, eps=eps).to(device_ids['data'])
         self.nm_scale = nm_scale
         self.project = torch.nn.Linear(hidden_dim, hidden_dim).to(device_ids['projector'])
         #self.coeff = torch.nn.ModuleList()
@@ -104,15 +115,19 @@ class Encoder(torch.nn.Module):
     #    z = torch.softmax(self.coeff_proj(z), 0)
     #    return z
 
-    def forward(self, x, edge_index, edge_weight=None):
+    def forward(self, x, edge_index, edge_weight=None, test=False):
         if edge_weight is not None:
             edge_weight = edge_weight.to(self.device_ids['encoder1'])
         z1 = self.encoder1(x.to(self.device_ids['encoder1']), edge_index.to(self.device_ids['encoder1']), edge_weight)
         #coeff = self.get_coeff(x.to(self.device_ids['encoder1']), edge_index.to(self.device_ids['encoder1']), edge_weight)
         z1n = self.encoder1(*self.corruption(x.to(self.device_ids['encoder1']), edge_index.to(self.device_ids['encoder1']), edge_weight))
         if edge_weight is not None:
-            edge_weight = edge_weight.to(self.device_ids['encoder2'])
-        z2, edge_index2, edge_weight2 = self.encoder2(x.to(self.device_ids['encoder2']), edge_index.to(self.device_ids['encoder2']), edge_weight)
+            edge_weight = edge_weight.to(self.device_ids['data'])
+        edge_index2, edge_weight2 = self.aug(edge_index.to(self.device_ids['data']), edge_weight, test=test)
+        #if edge_weight2 is not None:
+        #    edge_weight2 = edge_weight2.to(self.device_ids['encoder2'])
+
+        z2 = self.encoder2(x, edge_index2, edge_weight2, test=test, device=self.device_ids['encoder2'])
         #z2 = self.encoder2(x2, edge_index2, edge_weight2)
         #z2 = z2.mean(0)
         #z2 = torch.einsum('k n d, n k -> n d', z2, coeff.to(self.device_ids['encoder2']))
@@ -121,7 +136,7 @@ class Encoder(torch.nn.Module):
         g2, z2n = [], []
         for t in range(self.nm_scale):
             g2.append(self.project(torch.sigmoid(z2[t].mean(dim=0, keepdim=True)).to(self.device_ids['projector'])))
-            z2n_t = self.encoder2.features(*self.corruption(x.to(self.device_ids['encoder2']), edge_index2[t], edge_weight2[t]))
+            z2n_t = self.encoder2.features(*self.corruption(x.to(self.device_ids['encoder2']), edge_index2[t].to(self.device_ids['encoder2']), edge_weight2[t].to(self.device_ids['encoder2'])))
             z2n.append(z2n_t)
         z2n = torch.stack(z2n)
         g2 = torch.stack(g2)
@@ -148,28 +163,28 @@ def train(encoder_model, contrast_model, data, optimizer):
 
 def test(encoder_model, data):
     encoder_model.eval()
-    z1, z2, _, _, _, _ = encoder_model(data.x, data.edge_index)
-    z = z1 + z2.mean(0)
+    z1, z2, _, _, _, _ = encoder_model(data.x, data.edge_index, test=True)
+    #z = z1 + z2.mean(0)
     #split = get_split(num_samples=z.size()[0], train_ratio=0.1, test_ratio=0.8)
     split = from_predefined_split(data)
-    result = LREvaluator()(z, data.y, split)
+    result = LREvaluator()(z2.mean(0), data.y, split)
     return result
 
 
 def main():
     #datasets = ['Cora', 'Citeseer', 'PubMed']
-    datasets = ['PubMed']
+    datasets = ['Cora']
     device_ids = {'data':4, 'encoder1':5, 'encoder2':6, 'projector':7, 'contrast':4}
-    data_eps = {'PubMed':1e-3, 'Cora':1e-4, 'Citeseer':1e-6}
+    data_eps = {'PubMed':1e-4, 'Cora':1e-5, 'Citeseer':1e-6}
     data_scales = {'PubMed': 4, 'Cora':8, 'Citeseer':8}
-    nm_trials = 50
+    nm_trials = 5
     results_path = '/disk/scratch1/asif/workspace/graphNCE/modelsDWT/'
     if not os.path.exists(results_path):
         os.makedirs(results_path)
 
     results = {'Cora': {'F1Ma':None, 'F1Mi': None}, 'Citeseer':{'F1Ma':None, 'F1Mi': None}, 'PubMed':{'F1Ma':None, 'F1Mi': None}}
     for dataname in datasets:
-        print(f'Training for Dataset {dataname}')        
+        print(f'Training on {dataname}')        
         #seed = 42
         #torch.manual_seed(seed)
         #np.random.seed(seed)
@@ -179,8 +194,8 @@ def main():
         dataset = Planetoid(path, name=dataname, transform=T.NormalizeFeatures())
         data = dataset[0]
         gconv1 = GConv(input_dim=dataset.num_features, hidden_dim=512, num_layers=2)
-        gconv2 = GConvMultiScale(input_dim=dataset.num_features, hidden_dim=512, num_layers=2, nm_scale=data_scales[dataname], eps=data_eps[dataname])
-        encoder_model = Encoder(encoder1=gconv1, encoder2=gconv2, input_dim=dataset.num_features, hidden_dim=512, device_ids=device_ids, nm_scale=data_scales[dataname])
+        gconv2 = GConvMultiScale(input_dim=dataset.num_features, hidden_dim=512, num_layers=2)
+        encoder_model = Encoder(encoder1=gconv1, encoder2=gconv2, input_dim=dataset.num_features, hidden_dim=512, device_ids=device_ids, nm_scale=data_scales[dataname], eps=data_eps[dataname])
         contrast_model = DualBranchContrast(loss=L.JSD(), mode='G2L').to(device_ids['contrast'])
 
         optimizer = Adam(encoder_model.parameters(), lr=0.001)
