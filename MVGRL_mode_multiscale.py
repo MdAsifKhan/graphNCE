@@ -48,7 +48,13 @@ class GConvMultiScale(nn.Module):
         self.activation = nn.PReLU(hidden_dim)
         #self.mixingdistn = Dirichlet(torch.tensor([0.5]*self.nm_scale))
         #self.mixing = nn.Parameter(torch.ones(self.nm_scale, 1)*(1.0/nm_scale), requires_grad=True)
-        
+        self.mlp_layers = nn.ModuleList()
+        for j in range(nm_scale):
+            model = torch.nn.Sequential(nn.Linear(input_dim, hidden_dim),
+                                            nn.BatchNorm1d(hidden_dim),
+                                            nn.ReLU(),
+                                            nn.Linear(hidden_dim, hidden_dim))
+            self.mlp_layers.append(model)
         for i in range(num_layers):
             if i == 0:
                 self.layers.append(GCNConv(input_dim, hidden_dim))
@@ -58,8 +64,9 @@ class GConvMultiScale(nn.Module):
     def features(self, x, edge_index, edge_weight=None, test=False):
         z = x
         if not test:
-            x = x + 0.001* torch.randn(*x.shape).to(x.device)
-            #x = drop_feature(x, 0.1)
+            #x = x + 0.001* torch.randn(*x.shape).to(x.device)
+            x = self.mlp_layers(x)
+            x = drop_feature(x, 0.1)
             #x = x[:, torch.randperm(x.size(1))]
         for conv in self.layers:
             z = conv(z, edge_index, edge_weight)
