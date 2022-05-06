@@ -18,6 +18,8 @@ from torch.distributions.dirichlet import Dirichlet
 import numpy as np
 import yaml
 import os
+import random
+
 class GConv(nn.Module):
     def __init__(self, input_dim, hidden_dim, num_layers):
         super(GConv, self).__init__()
@@ -38,14 +40,15 @@ class GConv(nn.Module):
 
 
 class GConvMultiScale(nn.Module):
-    def __init__(self, input_dim, hidden_dim, num_layers):
+    def __init__(self, input_dim, hidden_dim, num_layers, nm_scale=8):
         super(GConvMultiScale, self).__init__()
         self.layers = torch.nn.ModuleList()
-        #self.nm_scale = nm_scale
+        self.nm_scale = nm_scale
         #self.aug = DiffusionAugmentation(nm_scale, eps=eps)
         self.activation = nn.PReLU(hidden_dim)
         #self.mixingdistn = Dirichlet(torch.tensor([0.5]*self.nm_scale))
         #self.mixing = nn.Parameter(torch.ones(self.nm_scale, 1)*(1.0/nm_scale), requires_grad=True)
+        
         for i in range(num_layers):
             if i == 0:
                 self.layers.append(GCNConv(input_dim, hidden_dim))
@@ -54,8 +57,10 @@ class GConvMultiScale(nn.Module):
 
     def features(self, x, edge_index, edge_weight=None, test=False):
         z = x
-        #if not test:
-        #    x = x + 0.01* torch.randn(*x.shape).to(x.device)
+        if not test:
+            x = x + 0.001* torch.randn(*x.shape).to(x.device)
+            #x = drop_feature(x, 0.1)
+            #x = x[:, torch.randperm(x.size(1))]
         for conv in self.layers:
             z = conv(z, edge_index, edge_weight)
             z = self.activation(z)
@@ -75,6 +80,8 @@ class GConvMultiScale(nn.Module):
             #    x = drop_feature(x, 0.3)
             if edge_weight[t] is not None:
                 edge_weight[t] = edge_weight[t].to(device)
+            #if not test:
+            #    x = x[:, torch.randperm(x.size(1))]
             features_t = self.features(x, edge_index[t].to(device), edge_weight[t], test)
             features_T.append(features_t)
         features_T = torch.stack(features_T)
@@ -87,12 +94,12 @@ class GConvMultiScale(nn.Module):
         return features_T
 
 class Encoder(torch.nn.Module):
-    def __init__(self, encoder1, encoder2, input_dim, hidden_dim, nm_scale=8, eps=1e-4, device_ids=[0,1,2,3]):
+    def __init__(self, encoder1, encoder2, input_dim, hidden_dim, diffusion='wavelet', nm_scale=8, eps=1e-4, device_ids=[0,1,2,3]):
         super(Encoder, self).__init__()
         self.device_ids = device_ids
         self.encoder1 = encoder1.to(device_ids['encoder1'])
         self.encoder2 = encoder2.to(device_ids['encoder2'])
-        self.aug = DiffusionAugmentation(nm_scale, eps=eps).to(device_ids['data'])
+        self.aug = DiffusionAugmentation(nm_scale, filter_type=diffusion, eps=eps).to(device_ids['data'])
         self.nm_scale = nm_scale
         self.project = torch.nn.Linear(hidden_dim, hidden_dim).to(device_ids['projector'])
         #self.coeff = torch.nn.ModuleList()
@@ -155,7 +162,7 @@ def train(encoder_model, contrast_model, data, optimizer):
     loss = 0.
     for scale in range(z2.shape[0]):
         loss += contrast_model(h1=z1, h2=z2[scale], g1=g1, g2=g2[scale], h3=z1n, h4=z2n[scale])
-    #loss = loss/z2.shape[0]
+    loss = loss/z2.shape[0]
     loss.backward()
     optimizer.step()
     return loss.item()
@@ -164,10 +171,10 @@ def train(encoder_model, contrast_model, data, optimizer):
 def test(encoder_model, data):
     encoder_model.eval()
     z1, z2, _, _, _, _ = encoder_model(data.x, data.edge_index, test=True)
-    #z = z1 + z2.mean(0)
+    z = z1 + z2.mean(0)
     #split = get_split(num_samples=z.size()[0], train_ratio=0.1, test_ratio=0.8)
     split = from_predefined_split(data)
-    result = LREvaluator()(z2.mean(0), data.y, split)
+    result = LREvaluator()(z, data.y, split)
     return result
 
 
@@ -175,9 +182,10 @@ def main():
     #datasets = ['Cora', 'Citeseer', 'PubMed']
     datasets = ['Cora']
     device_ids = {'data':4, 'encoder1':5, 'encoder2':6, 'projector':7, 'contrast':4}
-    data_eps = {'PubMed':1e-4, 'Cora':1e-5, 'Citeseer':1e-6}
+    data_eps = {'PubMed':1e-4, 'Cora':1e-4, 'Citeseer':1e-6}
     data_scales = {'PubMed': 4, 'Cora':8, 'Citeseer':8}
-    nm_trials = 5
+    nm_trials = 1
+    diffusion = 'heat'
     results_path = '/disk/scratch1/asif/workspace/graphNCE/modelsDWT/'
     if not os.path.exists(results_path):
         os.makedirs(results_path)
@@ -194,8 +202,8 @@ def main():
         dataset = Planetoid(path, name=dataname, transform=T.NormalizeFeatures())
         data = dataset[0]
         gconv1 = GConv(input_dim=dataset.num_features, hidden_dim=512, num_layers=2)
-        gconv2 = GConvMultiScale(input_dim=dataset.num_features, hidden_dim=512, num_layers=2)
-        encoder_model = Encoder(encoder1=gconv1, encoder2=gconv2, input_dim=dataset.num_features, hidden_dim=512, device_ids=device_ids, nm_scale=data_scales[dataname], eps=data_eps[dataname])
+        gconv2 = GConvMultiScale(input_dim=dataset.num_features, hidden_dim=512, num_layers=2, nm_scale=data_scales['Cora'])
+        encoder_model = Encoder(encoder1=gconv1, encoder2=gconv2, diffusion=diffusion, input_dim=dataset.num_features, hidden_dim=512, device_ids=device_ids, nm_scale=data_scales[dataname], eps=data_eps[dataname])
         contrast_model = DualBranchContrast(loss=L.JSD(), mode='G2L').to(device_ids['contrast'])
 
         optimizer = Adam(encoder_model.parameters(), lr=0.001)
@@ -207,7 +215,7 @@ def main():
                 pbar.update()
 
         torch.save({'encoder1':gconv1.state_dict(), 'encoder2':gconv2.state_dict(), 
-                       'contrast':contrast_model.state_dict(),'optim':optimizer.state_dict()}, f'{results_path}/model_{dataname}.pt')
+		'contrast':contrast_model.state_dict(),'optim':optimizer.state_dict()}, f'{results_path}/model_{dataname}_diffusion_{diffusion}_scales_{data_scales[dataname]}_eps_{data_eps[dataname]:.2e}.pt'.replace('.00', ''))
         F1Ma, F1Mi = [], []
         for i in range(nm_trials):
             test_result = test(encoder_model, data)

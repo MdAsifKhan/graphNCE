@@ -66,22 +66,28 @@ class DiffusionAugmentation(nn.Module):
 
         return edge_index, edge_weight
 
-    def heat_diffusion(self, edge_index, edge_weight):
+    def heat_diffusion(self, edge_index, edge_weight, test=False):
         nm_nodes = edge_index.max().item() + 1
         if self.ignore_edge_attr or edge_weight is None:
             edge_weight = torch.ones(edge_index.size(1), device=edge_index.device)
 
-        T = torch.logspace(0.01, 1, self.nm_filters)
+        if not test:
+            eps = torch.ones(self.nm_filters)*self.eps
+        else:
+            eps = torch.ones(self.nm_filters)*self.eps
+        T = torch.linspace(0.01, 0.1, self.nm_filters)
         edge_index_T, edge_weight_T = [], []
-        for t in range(T):
-            diffusion_t = GDC().diffusion_matrix_exact(edge_index, edge_weight, method='heat', t=t)
-            edge_index_t, edge_weight_t = GDC().sparsify_dense(diffusion_t, method='threshold', eps=self.eps)
+        for i,t in enumerate(T):
+            diffusion_t = GDC().diffusion_matrix_exact(edge_index, edge_weight, method='heat', t=t, num_nodes=nm_nodes)
+            edge_index_t, edge_weight_t = GDC().sparsify_dense(diffusion_t, method='threshold', eps=eps[i])
             edge_index_t, edge_weight_t = coalesce(edge_index_t, edge_weight_t, nm_nodes, nm_nodes)
             edge_index_t, edge_weight_t = self.transition_matrix(edge_index_t, edge_weight_t, nm_nodes, normalization='sym')
             edge_index_T.append(edge_index_t)
             edge_weight_T.append(edge_weight_t)
         #edge_index_T = torch.stack(edge_index_T)
         #edge_weight_T = torch.stack(edge_weight_T)
+        #import pdb
+        #pdb.set_trace()
         return edge_index_T, edge_weight_T
 
     def wavelet_diffusion(self, edge_index, edge_weight, test=False):
@@ -93,10 +99,11 @@ class DiffusionAugmentation(nn.Module):
         eye = torch.eye(*W.shape).to(W.device)
         T = 0.5 * (eye + W) # Lazy diffusion operator
         if not test:
-            eps = (torch.rand(1) * (0.1 - self.eps) + self.eps).to(T.device)
+            #eps = (torch.rand(self.nm_filters) * (0.01 - self.eps) + self.eps).to(T.device)
+            eps = torch.ones(self.nm_filters) * self.eps 
         else:
-            eps = self.eps
-        edge_index_0, edge_weight_0 = GDC().sparsify_dense(T, method='threshold', eps=eps)
+            eps = torch.ones(self.nm_filters) * self.eps
+        edge_index_0, edge_weight_0 = GDC().sparsify_dense(T, method='threshold', eps=eps[0])
         edge_index_0, edge_weight_0 = coalesce(edge_index_0, edge_weight_0, nm_nodes, nm_nodes)
         edge_index_0, edge_weight_0 = self.transition_matrix(edge_index_0, edge_weight_0, nm_nodes, normalization='sym')
         edge_index_T = [edge_index_0]
@@ -110,7 +117,7 @@ class DiffusionAugmentation(nn.Module):
             #edge_index_t = (score >= 0.5).nonzero(as_tuple=False).t()
             #edge_weight_t = score.flatten()[edge_index_t[0] * nm_nodes + edge_index_t[1]]
             
-            edge_index_t, edge_weight_t = GDC().sparsify_dense(filter_t, method='threshold', eps=eps)
+            edge_index_t, edge_weight_t = GDC().sparsify_dense(filter_t, method='threshold', eps=eps[i])
             edge_index_t, edge_weight_t = coalesce(edge_index_t, edge_weight_t, nm_nodes, nm_nodes)
             edge_index_t, edge_weight_t = self.transition_matrix(edge_index_t, edge_weight_t, nm_nodes, normalization='sym')
             edge_index_T.append(edge_index_t)

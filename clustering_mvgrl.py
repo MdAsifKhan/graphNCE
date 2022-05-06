@@ -15,7 +15,7 @@ from torch_geometric.datasets import Planetoid
 import numpy as np
 import os
 import yaml
-from MVGRL_mode_multiscale import GConv, Encoder
+from MVGRL_node import GConv, Encoder
 
 
 def main():
