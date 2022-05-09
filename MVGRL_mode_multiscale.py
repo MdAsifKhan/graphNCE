@@ -122,7 +122,7 @@ class Encoder(torch.nn.Module):
         #self.coeff.to(device_ids['encoder1'])
         #self.activation = nn.PReLU(hidden_dim).to(device_ids['encoder1'])
         uniform(hidden_dim, self.project.weight)
-        self.agg = nn.LSTM(hidden_dim, batch_first=False, hidden_size=int(hidden_dim/2), num_layers=1, bidirectional=True).to(self.device_ids['projector'])
+        #self.agg = nn.LSTM(hidden_dim, batch_first=False, hidden_size=int(hidden_dim/2), num_layers=1, bidirectional=True).to(self.device_ids['projector'])
 
     @staticmethod
     def corruption(x, edge_index, edge_weight):
@@ -149,9 +149,9 @@ class Encoder(torch.nn.Module):
         #    edge_weight2 = edge_weight2.to(self.device_ids['encoder2'])
 
         z2 = self.encoder2(x, edge_index2, edge_weight2, test=test, device=self.device_ids['encoder2'])
-        h0, c0 = torch.zeros(2, z2.shape[1], int(self.hidden_dim/2)), torch.zeros(2, z2.shape[1], int(self.hidden_dim/2))
-        out, (hn, cn) = self.agg(z2.to(self.device_ids['projector']), (h0.to(self.device_ids['projector']), c0.to(self.device_ids['projector'])))
-        z2 = out
+        #h0, c0 = torch.zeros(2, z2.shape[1], int(self.hidden_dim/2)), torch.zeros(2, z2.shape[1], int(self.hidden_dim/2))
+        #out, (hn, cn) = self.agg(z2.to(self.device_ids['projector']), (h0.to(self.device_ids['projector']), c0.to(self.device_ids['projector'])))
+        #z2 = out
         
         #z2 = self.encoder2(x2, edge_index2, edge_weight2)
         #z2 = z2.mean(0).to(self.device_ids['projector'])
@@ -166,14 +166,15 @@ class Encoder(torch.nn.Module):
             z2n_t = self.encoder2.layers[t](*self.corruption(x.to(self.device_ids['encoder2']), edge_index2[t].to(self.device_ids['encoder2']), edge_weight2[t].to(self.device_ids['encoder2'])))
             z2n.append(z2n_t)
         z2n = torch.stack(z2n)
-        out, (hn, cn) = self.agg(z2n.to(self.device_ids['projector']), (h0.to(self.device_ids['projector']), c0.to(self.device_ids['projector'])))
-        z2n = out  
-        g2 = torch.stack(g2)
+        #out, (hn, cn) = self.agg(z2n.to(self.device_ids['projector']), (h0.to(self.device_ids['projector']), c0.to(self.device_ids['projector'])))
+        #z2n = out  
+        g2 = torch.stack(g2).mean(0)
         #coeffn = self.get_coeff(*self.corruption(x.to(self.device_ids['encoder1']), edge_index.to(self.device_ids['encoder1']), edge_weight))
         #z2n = torch.einsum('k n d, n k -> n d', z2n, coeffn.to(self.device_ids['encoder2']))
         #coeff = torch.softmax(self.encoder2.mixing, 0)
         #z2n = torch.einsum('t n j, t -> n j', z2n, coeff.squeeze())
-        #z2n = z2n.mean(0).to(self.device_ids['projector'])
+        z2n = z2n.mean(0)
+        z2 = z2.mean(0)
         return z1.to(self.device_ids['contrast']), z2.to(self.device_ids['contrast']), g1.to(self.device_ids['contrast']), g2.to(self.device_ids['contrast']), z1n.to(self.device_ids['contrast']), z2n.to(self.device_ids['contrast'])
 
 
@@ -181,11 +182,11 @@ def train(encoder_model, contrast_model, data, optimizer):
     encoder_model.train()
     optimizer.zero_grad()
     z1, z2, g1, g2, z1n, z2n = encoder_model(data.x, data.edge_index)
-    #loss = contrast_model(h1=z1, h2=z2, g1=g1, g2=g2, h3=z1n, h4=z2n)
-    loss = 0.
-    coeff = [1. for i in range(z2.shape[0])]
-    for scale in range(z2.shape[0]):
-        loss += coeff[scale]* contrast_model(h1=z1, h2=z2[scale], g1=g1, g2=g2[scale], h3=z1n, h4=z2n[scale])
+    loss = contrast_model(h1=z1, h2=z2, g1=g1, g2=g2, h3=z1n, h4=z2n)
+    #loss = 0.
+    #coeff = [1. for i in range(z2.shape[0])]
+    #for scale in range(z2.shape[0]):
+    #    loss += coeff[scale]* contrast_model(h1=z1, h2=z2[scale], g1=g1, g2=g2[scale], h3=z1n, h4=z2n[scale])
     #loss = loss/z2.shape[0]
     loss.backward()
     optimizer.step()
@@ -206,7 +207,7 @@ def main():
     #datasets = ['Cora', 'Citeseer', 'PubMed']
     datasets = ['Cora']
     device_ids = {'data':4, 'encoder1':5, 'encoder2':6, 'projector':7, 'contrast':4}
-    data_eps = {'PubMed':1e-4, 'Cora':1e-4, 'Citeseer':1e-6}
+    data_eps = {'PubMed':1e-4, 'Cora':1e-3, 'Citeseer':1e-6}
     data_scales = {'PubMed': 4, 'Cora':12, 'Citeseer':8}
     nm_trials = 1
     diffusion = 'wavelet'
@@ -226,7 +227,7 @@ def main():
         dataset = Planetoid(path, name=dataname, transform=T.NormalizeFeatures())
         data = dataset[0]
         gconv1 = GConv(input_dim=dataset.num_features, hidden_dim=512, num_layers=2)
-        gconv2 = GConvMultiScale(input_dim=dataset.num_features, hidden_dim=512, num_layers=2, nm_scale=data_scales['Cora'])
+        gconv2 = GConvMultiScale(input_dim=dataset.num_features, hidden_dim=512, num_layers=2, nm_scale=data_scales[dataname])
         encoder_model = Encoder(encoder1=gconv1, encoder2=gconv2, diffusion=diffusion, input_dim=dataset.num_features, hidden_dim=512, device_ids=device_ids, nm_scale=data_scales[dataname], eps=data_eps[dataname])
         contrast_model = DualBranchContrast(loss=L.JSD(), mode='G2L').to(device_ids['contrast'])
 

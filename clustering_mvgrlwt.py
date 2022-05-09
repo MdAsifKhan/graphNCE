@@ -24,8 +24,8 @@ def main():
     #datasets = ['PubMed', 'Cora', 'Citeseer']
     datasets = ['Cora']
     device_ids = {'data':0, 'encoder1':1, 'encoder2':2, 'projector':3, 'contrast':3}
-    data_eps = {'PubMed':1e-2, 'Cora':1e-4, 'Citeseer':1e-5}
-    data_scales = {'PubMed': 4, 'Cora':12, 'Citeseer':8}
+    data_eps = {'PubMed':1e-4, 'Cora':1e-3, 'Citeseer':1e-5}
+    data_scales = {'PubMed': 4, 'Cora':8, 'Citeseer':8}
     diffusion = 'wavelet'
     results_path = '/disk/scratch1/asif/workspace/graphNCE/modelsDWT/'
 
@@ -36,7 +36,7 @@ def main():
         data = dataset[0]
 
         gconv1 = GConv(input_dim=dataset.num_features, hidden_dim=512, num_layers=2)
-        gconv2 = GConvMultiScale(input_dim=dataset.num_features, hidden_dim=512, num_layers=2, nm_scale=data_scales['Cora'])
+        gconv2 = GConvMultiScale(input_dim=dataset.num_features, hidden_dim=512, num_layers=2, nm_scale=data_scales[dataname])
         state = torch.load(f'{results_path}/model_{dataname}_diffusion_{diffusion}_scales_{data_scales[dataname]}_eps_{data_eps[dataname]:.2e}.pt'.replace('.00', ''))
         gconv1.load_state_dict(state['encoder1']) 
         gconv2.load_state_dict(state['encoder2']) 
@@ -50,13 +50,14 @@ def main():
         contrast_model.load_state_dict(state['contrast'])
         encoder_model.eval()
         z1, z2, _, _, _, _ = encoder_model(data.x, data.edge_index, test=True)
-        z = z1 + z2.mean(0)
+        z = z1 + z2
         split = from_predefined_split(data)
 
         from sklearn.cluster import KMeans, SpectralClustering
         import sklearn.metrics as sklm
-
+        #z = z[split['test']]
         y = data.y
+        #y = y[split['test']]
         km = KMeans(n_clusters=y.max().item()+1)
         z = z.detach().cpu().numpy()
         #z = (z - z.mean(0))/(z.std(0)+1e-6)
