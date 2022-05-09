@@ -25,7 +25,7 @@ def main():
     datasets = ['Cora']
     device_ids = {'data':0, 'encoder1':1, 'encoder2':2, 'projector':3, 'contrast':3}
     data_eps = {'PubMed':1e-2, 'Cora':1e-4, 'Citeseer':1e-5}
-    data_scales = {'PubMed': 4, 'Cora':8, 'Citeseer':8}
+    data_scales = {'PubMed': 4, 'Cora':12, 'Citeseer':8}
     diffusion = 'wavelet'
     results_path = '/disk/scratch1/asif/workspace/graphNCE/modelsDWT/'
 
@@ -72,6 +72,13 @@ def main():
         y_pred = prediction.labels_
         print(f'NMI Score {sklm.adjusted_mutual_info_score(y.cpu().numpy().reshape(-1), y_pred.reshape(-1))}')
         print(f'ARI Score {sklm.adjusted_rand_score(y.cpu().numpy().reshape(-1), y_pred.reshape(-1))}')
+        
+        from sklearn.manifold import TSNE
+        import matplotlib.pyplot as plt
+
+        z_embed = TSNE(n_components=2, learning_rate='auto', init='pca').fit_transform(z)
+        plt.scatter(z_embed[:,0], z_embed[:,1],  c=y.reshape(-1))
+        plt.savefig(f'{results_path}/model_{dataname}_diffusion_{diffusion}_scales_{data_scales[dataname]}_eps_{data_eps[dataname]:.2e}.png'.replace('.00',''))
 
 if __name__ == '__main__':
     main()

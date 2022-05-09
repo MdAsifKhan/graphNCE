@@ -60,10 +60,18 @@ def main():
 
         y = data.y
         km = KMeans(n_clusters=y.max().item()+1)
-        prediction = km.fit(z.detach().cpu().numpy())
+        z = z.detach().cpu().numpy()
+        prediction = km.fit(z)
         y_pred = prediction.labels_
         print(f'NMI Score {sklm.adjusted_mutual_info_score(y.cpu().numpy().reshape(-1), y_pred.reshape(-1))}')
         print(f'ARI Score {sklm.adjusted_rand_score(y.cpu().numpy().reshape(-1), y_pred.reshape(-1))}')
+        from sklearn.manifold import TSNE
+        import matplotlib.pyplot as plt
+
+        z_embed = TSNE(n_components=2, learning_rate='auto', init='pca').fit_transform(z)
+
+        plt.scatter(z_embed[:,0], z_embed[:,1],  c=y.reshape(-1))
+        plt.savefig(f'{results_path}/model_{dataname}_mvgrl.png'.replace('.00','')) 
 
 if __name__ == '__main__':
     main()
