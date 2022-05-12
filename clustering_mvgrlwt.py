@@ -17,17 +17,17 @@ from torch.distributions.dirichlet import Dirichlet
 import numpy as np
 import yaml
 import os
-
+import pdb
 
 from MVGRL_mode_multiscale import GConv, GConvMultiScale, Encoder
 def main():
     #datasets = ['PubMed', 'Cora', 'Citeseer']
-    datasets = ['Cora']
+    datasets = ['PubMed']
     device_ids = {'data':0, 'encoder1':1, 'encoder2':2, 'projector':3, 'contrast':3}
-    data_eps = {'PubMed':1e-4, 'Cora':1e-3, 'Citeseer':1e-5}
-    data_scales = {'PubMed': 4, 'Cora':8, 'Citeseer':8}
+    data_eps = {'PubMed':1e-3, 'Cora':1e-3, 'Citeseer':1e-5}
+    data_scales = {'PubMed': 8, 'Cora':8, 'Citeseer':8}
     diffusion = 'wavelet'
-    results_path = '/disk/scratch1/asif/workspace/graphNCE/modelsDWT/'
+    results_path = '/disk/scratch2/asif/workspace/graphNCE/modelsDWT/'
 
     for dataname in datasets:
         print(f'Testing for Dataset {dataname}')        
@@ -35,22 +35,24 @@ def main():
         dataset = Planetoid(path, name=dataname, transform=T.NormalizeFeatures())
         data = dataset[0]
 
-        gconv1 = GConv(input_dim=dataset.num_features, hidden_dim=512, num_layers=2)
+        #gconv1 = GConv(input_dim=dataset.num_features, hidden_dim=512, num_layers=2)
         gconv2 = GConvMultiScale(input_dim=dataset.num_features, hidden_dim=512, num_layers=2, nm_scale=data_scales[dataname])
         state = torch.load(f'{results_path}/model_{dataname}_diffusion_{diffusion}_scales_{data_scales[dataname]}_eps_{data_eps[dataname]:.2e}.pt'.replace('.00', ''))
-        gconv1.load_state_dict(state['encoder1']) 
+        #gconv1.load_state_dict(state['encoder1']) 
         gconv2.load_state_dict(state['encoder2']) 
         
-        encoder_model = Encoder(encoder1=gconv1, encoder2=gconv2, diffusion=diffusion, input_dim=dataset.num_features, hidden_dim=512, device_ids=device_ids, nm_scale=data_scales[dataname], eps=data_eps[dataname])
-        contrast_model = DualBranchContrast(loss=L.JSD(), mode='G2L').to(device_ids['contrast'])
+        encoder_model = Encoder(encoder2=gconv2, diffusion=diffusion, input_dim=dataset.num_features, hidden_dim=512, device_ids=device_ids, nm_scale=data_scales[dataname], eps=data_eps[dataname])
+        #contrast_model = DualBranchContrast(loss=L.JSD(), mode='G2L').to(device_ids['contrast'])
 
         #state = torch.load(f'{results_path}/model_{dataname}.pt')
         #encoder_model.encoder1.load_state_dict(state['encoder1'])
         #encoder_model.encoder2.load_state_dict(state['encoder2'])
-        contrast_model.load_state_dict(state['contrast'])
+        #contrast_model.load_state_dict(state['contrast'])
         encoder_model.eval()
-        z1, z2, _, _, _, _ = encoder_model(data.x, data.edge_index, test=True)
-        z = z1 + z2
+        z, g, _ = encoder_model(data.x, data.edge_index, test=True)
+        z = z.mean(0)
+        #z1, z2, _, _, _, _ = encoder_model(data.x, data.edge_index, test=True)
+        #z = z1 + z2
         split = from_predefined_split(data)
 
         from sklearn.cluster import KMeans, SpectralClustering
