@@ -23,7 +23,7 @@ from MVGRL_mode_multiscale import GConv, GConvMultiScale, Encoder
 def main():
     #datasets = ['PubMed', 'Cora', 'Citeseer']
     datasets = ['PubMed']
-    device_ids = {'data':0, 'encoder1':1, 'encoder2':2, 'projector':3, 'contrast':3}
+    device_ids = {'data':4, 'encoder1':5, 'encoder2':6, 'projector':7, 'contrast':4}
     data_eps = {'PubMed':1e-3, 'Cora':1e-3, 'Citeseer':1e-5}
     data_scales = {'PubMed': 8, 'Cora':8, 'Citeseer':8}
     diffusion = 'wavelet'
