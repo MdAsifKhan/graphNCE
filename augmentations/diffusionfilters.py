@@ -94,20 +94,25 @@ class DiffusionAugmentation(nn.Module):
         nm_nodes = edge_index.max().item() + 1
         if self.ignore_edge_attr or edge_weight is None:
             edge_weight = torch.ones(edge_index.size(1), device=edge_index.device)
-        edge_index, edge_weight = self.transition_matrix(edge_index, edge_weight, nm_nodes, normalization='sym')
+        edge_index, edge_weight = self.transition_matrix(edge_index, edge_weight, nm_nodes, normalization='col')
         W = to_dense_adj(edge_index, edge_attr=edge_weight).squeeze()
         eye = torch.eye(*W.shape).to(W.device)
-        T = 0.5 * (eye + W) # Lazy diffusion operator
+        edge_index_T = [edge_index] 
+        edge_weight_T = [edge_weight]
+        if self.nm_filters<1:
+            return edge_index_T, edge_weight_T
+        T = (0.6*eye + 0.4*W) # Lazy diffusion operator
         if not test:
             #eps = (torch.rand(self.nm_filters) * (0.01 - self.eps) + self.eps).to(T.device)
             eps = torch.ones(self.nm_filters) * self.eps 
         else:
             eps = torch.ones(self.nm_filters) * self.eps
         edge_index_0, edge_weight_0 = GDC().sparsify_dense(T, method='threshold', eps=eps[0])
+        #edge_index_0, edge_weight_0 = GDC().sparsify_dense(T, method='topk', k=4, dim=1)   
         edge_index_0, edge_weight_0 = coalesce(edge_index_0, edge_weight_0, nm_nodes, nm_nodes)
-        edge_index_0, edge_weight_0 = self.transition_matrix(edge_index_0, edge_weight_0, nm_nodes, normalization='sym')
-        edge_index_T = [edge_index_0]
-        edge_weight_T = [edge_weight_0]
+        edge_index_0, edge_weight_0 = self.transition_matrix(edge_index_0, edge_weight_0, nm_nodes, normalization='col')
+        edge_index_T.append(edge_index_0)
+        edge_weight_T.append(edge_weight_0)
         for i in range(1, self.nm_filters):
             dilation = 2**(i-1)
             Tp = torch.matrix_power(T, dilation)
@@ -116,10 +121,10 @@ class DiffusionAugmentation(nn.Module):
             #score = torch.sigmoid(thresh*filter_t - self.bias[i])
             #edge_index_t = (score >= 0.5).nonzero(as_tuple=False).t()
             #edge_weight_t = score.flatten()[edge_index_t[0] * nm_nodes + edge_index_t[1]]
-            
+            #edge_index_t, edge_weight_t = GDC().sparsify_dense(T, method='topk', k=4, dim=1)
             edge_index_t, edge_weight_t = GDC().sparsify_dense(filter_t, method='threshold', eps=eps[i])
             edge_index_t, edge_weight_t = coalesce(edge_index_t, edge_weight_t, nm_nodes, nm_nodes)
-            edge_index_t, edge_weight_t = self.transition_matrix(edge_index_t, edge_weight_t, nm_nodes, normalization='sym')
+            edge_index_t, edge_weight_t = self.transition_matrix(edge_index_t, edge_weight_t, nm_nodes, normalization='col')
             edge_index_T.append(edge_index_t)
             edge_weight_T.append(edge_weight_t)
             del filter_t, Tp

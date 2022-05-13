@@ -22,9 +22,9 @@ import pdb
 from MVGRL_mode_multiscale import GConv, GConvMultiScale, Encoder
 def main():
     #datasets = ['PubMed', 'Cora', 'Citeseer']
-    datasets = ['PubMed']
+    datasets = ['Cora']
     device_ids = {'data':4, 'encoder1':5, 'encoder2':6, 'projector':7, 'contrast':4}
-    data_eps = {'PubMed':1e-3, 'Cora':1e-3, 'Citeseer':1e-5}
+    data_eps = {'PubMed':1e-3, 'Cora':1e-4, 'Citeseer':1e-5}
     data_scales = {'PubMed': 8, 'Cora':8, 'Citeseer':8}
     diffusion = 'wavelet'
     results_path = '/disk/scratch2/asif/workspace/graphNCE/modelsDWT/'
@@ -50,7 +50,7 @@ def main():
         #contrast_model.load_state_dict(state['contrast'])
         encoder_model.eval()
         z, g, _ = encoder_model(data.x, data.edge_index, test=True)
-        z = z.mean(0)
+        z = z.mean(1).squeeze()
         #z1, z2, _, _, _, _ = encoder_model(data.x, data.edge_index, test=True)
         #z = z1 + z2
         split = from_predefined_split(data)

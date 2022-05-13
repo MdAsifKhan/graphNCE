@@ -11,10 +11,11 @@ from GCL.eval import get_split, from_predefined_split, LREvaluator
 from GCL.models import DualBranchContrast
 from torch_geometric.nn import GCNConv
 from torch_geometric.nn.inits import uniform
-from torch_geometric.datasets import Planetoid
+from torch_geometric.datasets import Planetoid, WebKB, WikipediaNetwork
 import numpy as np
 import os
 import yaml
+import pdb
 
 class GConv(nn.Module):
     def __init__(self, input_dim, hidden_dim, num_layers):
@@ -83,35 +84,48 @@ def test(encoder_model, data):
     z1, z2, _, _, _, _ = encoder_model(data.x, data.edge_index)
     z = z1 + z2
     #split = get_split(num_samples=z.size()[0], train_ratio=0.1, test_ratio=0.8)
-    split = from_predefined_split(data)
-    result = LREvaluator()(z, data.y, split)
-    return result
+    #split = from_predefined_split(data)
+    results_all = []
+    for j in range(data.train_mask.shape[1]):
+        indices = torch.arange(data.num_nodes)
+        split = {'train': indices[data.train_mask[:,j]],
+                   'valid': indices[data.val_mask[:,j]],
+                    'test': indices[data.test_mask[:,j]]
+                }
+        result = LREvaluator()(z, data.y, split)
+        results_all.append(result)
+    return results_all
 
 
 def main():
-    datasets = ['Cora', 'Citeseer', 'PubMed']
-    #datasets = ['PubMed']
+    datasets = ['chameleon', 'squirrel']
+    #datasets = ['Cornell', 'Texas', 'Wisconsin']
     device_ids = {'data':0, 'encoder1':0, 'encoder2':1, 'projector':2, 'contrast':3}
-    nm_trials = 50
+    nm_trials = 1
     results_path = '/disk/scratch1/asif/workspace/graphNCE/modelsMVGRL/'
     if not os.path.exists(results_path):
         os.makedirs(results_path)
-    results = {'Cora': {'F1Ma':None, 'F1Mi':None}, 
-                    'Citeseer': {'F1Ma':None, 'F1Mi':None}, 
-                        'PubMed': {'F1Ma':None, 'F1Mi':None}}
-
+    #results = {'Cornell': {'F1Ma':None, 'F1Mi':None}, 
+    #                'Texas': {'F1Ma':None, 'F1Mi':None}, 
+    #                    'Wisconsin': {'F1Ma':None, 'F1Mi':None}}
+    results = {'chameleon': {'F1Ma':None, 'F1Mi':None}, 
+		    'crocodile':{'F1Ma':None, 'F1Mi':None},
+                     'squirrel': {'F1Ma':None, 'F1Mi':None}
+                }
     for dataname in datasets:
         print(f'Training for Dataset {dataname}')
-        #seed = 42
-        #torch.manual_seed(seed)
-        #np.random.seed(seed)
-        #torch.backends.cudnn.deterministic = True
-        #torch.backends.cudnn.benchmark = False
+        seed = 42
+        torch.manual_seed(seed)
+        np.random.seed(seed)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
 
         path = osp.join(osp.expanduser('~'), 'datasets')
-        dataset = Planetoid(path, name=dataname, transform=T.NormalizeFeatures())
+        #dataset = Planetoid(path, name=dataname, transform=T.NormalizeFeatures())
+        #dataset = WebKB(path, name=dataname, transform=T.NormalizeFeatures())
+        dataset = WikipediaNetwork(path, name=dataname, transform=T.NormalizeFeatures())
         data = dataset[0]
-
+        #pdb.set_trace()
         aug1 = A.Identity()
         aug2 = A.PPRDiffusion(alpha=0.2, eps=1e-3)
         gconv1 = GConv(input_dim=dataset.num_features, hidden_dim=512, num_layers=2)
@@ -131,10 +145,12 @@ def main():
                         'contrast':contrast_model.state_dict(),'optim':optimizer.state_dict()}, f'{results_path}/model_{dataname}.pt')
         F1Ma, F1Mi = [], []
         for i in range(nm_trials):
-            test_result = test(encoder_model, data)
-            F1Ma.append(test_result["macro_f1"])
-            F1Mi.append(test_result["micro_f1"])
-            print(f'(E): Trial= {i+1} Best test Accuracy={test_result["micro_f1"]:.4f}, F1Ma={test_result["macro_f1"]:.4f}')
+            test_result_all = test(encoder_model, data)
+            F1Ma = [test_result["macro_f1"] for test_result in test_result_all]
+            F1Mi = [test_result["micro_f1"] for test_result in test_result_all]
+            #F1Ma.append(test_result["macro_f1"])
+            #F1Mi.append(test_result["micro_f1"])
+            #print(f'(E): Trial= {i+1} Best test Accuracy={test_result["micro_f1"]:.4f}, F1Ma={test_result["macro_f1"]:.4f}')
 
         #F1Ma = np.array(F1Ma)
         #F1Mi = np.array(F1Mi)
