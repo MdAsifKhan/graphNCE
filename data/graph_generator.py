@@ -1,4 +1,4 @@
-import build_graph
+from data import build_graph
 
 def graph_generator(width_basis=15, basis_type = "cycle", n_shapes = 5, shape_list=[[["house"]]], identifier = 'AA', add_edges = 0):
     ################################### EXAMPLE TO BUILD A SIMPLE REGULAR STRUCTURE ##########
