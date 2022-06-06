@@ -1,38 +1,21 @@
-import utils
-import networkx as nx
-import numpy as np
-from dgl.data import CitationGraphDataset
+import build_graph
 
-mode = "introduction"
-if mode == "real":
-    dataset_str = "wisconsin"
-    g,label = utils.read_real_datasets(dataset_str)
-    nxg = g.to_networkx()
-    nx.write_edgelist(nxg, "../edgelists/realdatasets/{}.edgelist".format(dataset_str))
-    label = np.array(label)
-    np.savetxt('../edgelists/realdatasets/np_{}.txt'.format(dataset_str), label)
-    nx.write_gml(nxg, "../edgelists/realdatasets/{}.gml".format(dataset_str))
+def graph_generator(width_basis=15, basis_type = "cycle", n_shapes = 5, shape_list=[[["house"]]], identifier = 'AA', add_edges = 0):
+    ################################### EXAMPLE TO BUILD A SIMPLE REGULAR STRUCTURE ##########
+    ## REGULAR STRUCTURE: the most simple structure:  basis + n small patterns of a single type
+    ### 1. Choose the basis (cycle, torus or chain)
+    ### 2. Add the shapes
+    list_shapes = []
+    for shape in shape_list:
+        list_shapes += shape * n_shapes
+    print(list_shapes)
 
-if mode == "citation":
-    dataset_str = "pubmed"
-    dataset = CitationGraphDataset(dataset_str)
-    g = dataset[0]
-    label = g.ndata['label']
-    nxg = g.to_networkx()
-    nx.write_edgelist(nxg, "../edgelists/citation/{}.edgelist".format(dataset_str))
-    label = np.array(label)
-    np.savetxt('../edgelists/citation/np_{}.txt'.format(dataset_str), label)
-    nx.write_gml(nxg, "../edgelists/citation/{}.gml".format(dataset_str))
+    ### 3. Give a name to the graph
+    name_graph = 'houses' + identifier
+    sb.set_style('white')
 
-if mode == "synthetic":
-    for i in range(10):
-        G, role_id, identifier = utils.synthetic_graph_generator(width_basis=15, identifier="cycle_test", shape_list=[[["house"]]] , add_edges=0, plot=True)
-        nxg = G
-        nx.write_edgelist(nxg, "../edgelists/synthetic/{}.edgelist".format(identifier + str(i)))
-        nx.write_gml(G, "../edgelists/synthetic/{}.gml".format(identifier + str(i)))
-        label = np.array(role_id)
-        np.savetxt('../edgelists/synthetic/np_{}.txt'.format(identifier + str(i)), label)
-
-if mode == "introduction":
-    G, role_id, identifier = utils.synthetic_graph_generator(width_basis=2, identifier="cycle_test", n_shapes=4,
-                                                             shape_list=[[["house"]]], add_edges=0, plot=True, basis_type="string")
+    ### 4. Pass all these parameters to the Graph Structure
+    G, communities, plugins, role_id = build_graph.build_structure(width_basis, basis_type, list_shapes, start=0,
+                                                                   add_random_edges=add_edges,
+                                                                   plot=True, savefig=False)
+    return G, role_id
