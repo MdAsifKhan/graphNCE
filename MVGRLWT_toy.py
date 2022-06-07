@@ -155,8 +155,8 @@ class Encoder(torch.nn.Module):
     #    return z
 
     def forward(self, x, edge_index, edge_weight=None, test=False):
-        if edge_weight is not None:
-            edge_weight = edge_weight.to(self.device_ids['encoder1'])
+        #if edge_weight is not None:
+        #    edge_weight = edge_weight.to(self.device_ids['encoder1'])
         #z1 = self.encoder1(x.to(self.device_ids['encoder1']), edge_index.to(self.device_ids['encoder1']), edge_weight)
         #coeff = self.get_coeff(x.to(self.device_ids['encoder1']), edge_index.to(self.device_ids['encoder1']), edge_weight)
         #z1n = self.encoder1(*self.corruption(x.to(self.device_ids['encoder1']), edge_index.to(self.device_ids['encoder1']), edge_weight))
@@ -179,10 +179,10 @@ class Encoder(torch.nn.Module):
         #coeff = torch.softmax(self.coeff, 0).squeeze()
         #z2 = torch.einsum('n k d, n k -> n d', z2.to(self.device_ids['projector']), coeff_pos)
         #g1 = self.project(torch.sigmoid(z1.mean(dim=0, keepdim=True)).to(self.device_ids['projector']))
-        g2 = self.project(torch.sigmoid(z2.mean(1).squeeze().mean(dim=0, keepdim=True)).to(self.device_ids['projector']))
-        z2n = []
+        #g2 = self.project(torch.sigmoid(z2.mean(1).squeeze().mean(dim=0, keepdim=True)).to(self.device_ids['projector']))
+        z2n, g2 = [], []
         for t in range(self.nm_scale+1):
-            #g2.append(self.project(torch.sigmoid(z2[t].mean(dim=0, keepdim=True)).to(self.device_ids['projector'])))
+            g2.append(self.project(torch.sigmoid(z2[t].mean(dim=0, keepdim=True)).to(self.device_ids['projector'])))
             # x_t= torch.cat([x.to(self.device_ids['encoder2']), self.encoder2.onehot[t].repeat(x.size(0), 1).to(self.device_ids['encoder2'])], 1)
             #x2_t = self.encoder2.mlp_layers(x_t)
             z2n_t = self.encoder2.layers[t](*self.corruption(x.to(self.device_ids['encoder2']), edge_index2[t].to(self.device_ids['encoder2']), edge_weight2[t].to(self.device_ids['encoder2'])))
@@ -193,7 +193,7 @@ class Encoder(torch.nn.Module):
         #z2n = out`
         #coeff_neg = torch.softmax(self.coeff_proj(z2n.view(x.size(0), -1).to(self.device_ids['projector'])), 1)
         #z2n = self.proj1(z2n.view(-1, self.hidden_dim).to(self.device_ids['projector'])).view(-1, self.nm_scale+1, self.hidden_dim)
-        #g2 = torch.stack(g2, 1)
+        g2 = torch.stack(g2, 1)
         #coeffn = self.get_coeff(*self.corruption(x.to(self.device_ids['encoder1']), edge_index.to(self.device_ids['encoder1']), edge_weight))
         #z2n = torch.einsum('n k d, n k -> n d', z2n, coeff_neg)
         #coeff = torch.softmax(self.encoder2.mixing, 0)
@@ -220,8 +220,10 @@ def train(encoder_model, contrast_model, data, optimizer):
     #loss = contrast_model(h1=z1, h2=z2, g1=g1, g2=g2, h3=z1n, h4=z2n)
     loss = 0.
     coeff = [1.0 for i in range(z.shape[1])]
-    for scale in range(z.shape[1]):
-        loss += coeff[scale] * contrast_model(h=z[:,scale,:], g=g, hn=zn[:,scale,:])
+    for i in range(z.shape[1]):
+        for j in range(z.shape[1]):
+            if i<j:
+                loss += contrast_model(h1=z[:,i,:], h2=z[:,j,:], g1=g[:,i,:], g2=g[:,j,:], h3=zn[:,i,:], h4=zn[:,j,:])
         #loss += coeff[scale]* contrast_model(h1=z1, h2=z2[scale], g1=g1, g2=g2[scale], h3=z1n, h4=z2n[scale])
     #loss = loss/z2.shape[0]
     loss.backward()
@@ -229,91 +231,75 @@ def train(encoder_model, contrast_model, data, optimizer):
     return loss.item()
 
 
+from utils import cluster_graph, unsupervised_evaluate
 
-def test(encoder_model, data):
+def test(encoder_model, data, role_id, trial=0):
     encoder_model.eval()
     z, _, _ = encoder_model(data.x, data.edge_index, test=True)
-    #z = encoder_model(data.x, data.edge_index, test=True)
-    #z = z1 + z2
-    #split = get_split(num_samples=z.size()[0], train_ratio=0.1, test_ratio=0.8)
-    #split = from_predefined_split(data)
-    results_all = []
-    indices = torch.arange(data.num_nodes)
-    for j in range(data.train_mask.shape[1]):
-        #indices = torch.arange(data.num_nodes)
-        #pdb.set_trace()
-        split = get_split(num_samples=z.size()[0], train_ratio=0.6, test_ratio=0.2)
-        #split = {'train': indices[data.train_mask[:,j]], 
-        #          'valid':indices[data.val_mask[:,j]],
-        #           'test': indices[data.test_mask[:,j]]
-        #        }
-        result = LREvaluator()(z.mean(1).squeeze(), data.y, split)
-        results_all.append(result)
-    return results_all
-
-from graph_generator import graph_generator
-
+    
+    labels_pred, colors, trans_data, nb_clust = cluster_graph(role_id, z.mean(1))
+    hom, comp, ami, nb_clust, ch, sil = unsupervised_evaluate(colors, labels_pred, trans_data, nb_clust)
+    print(f"Trial {trial} \t Homogeneity \t Completeness \t AMI \t nb clusters \t CH \t  Silhouette \n")
+    print(hom, comp, ami, nb_clust, ch, sil)
+    return hom, comp, ami, nb_clust, ch, sil
+    
+from data import build_graph
+from torch_geometric.utils import from_networkx
+from torch_geometric.data import Data
 def main():
-    G, role_id = graph_generator(width_basis=6, n_shapes = 2, shape_list=[[["house", 5]]], add_edges=0)
-    print('nb of nodes in the graph: ', G.number_of_nodes())
-    print('nb of edges in the graph: ', G.number_of_edges())
-    pdb.set_trace()    
+    datasets = ['house']
     device_ids = {'data':4, 'encoder1':5, 'encoder2':6, 'projector':7, 'contrast':4}
-    data_eps = {'Actor':1e-2, 'Cornell':1e-5, 'Texas':1e-2, 'Wisconsin':1e-5, 'chameleon':1e-4, 'squirrel':1e-4, 'Cora':1e-4, 'Citeseer': 1e-5}
-    data_scales = {'Actor':8, 'Cornell': 12, 'Texas':8, 'Wisconsin':8, 'chameleon':8, 'squirrel':16, 'Cora':8, 'Citeseer':8}
-    nm_trials = 1
+    
+    data_eps = {'house': 1e-3, 'varied':1e-5}
+    data_scales = {'house':4, 'varied':4}
+    data_shapes = {'house': [["house"]]*5, 'varied':[["fan",8]]+[["star",8]]+[["house", 8]]}
+    data_wb = {'house':15, 'varied':25}
+    nm_trials = 20
     diffusion = 'wavelet'
     results_path = '/disk/scratch2/asif/workspace/graphNCE/modelsDWT/'
     if not os.path.exists(results_path):
         os.makedirs(results_path)
 
-    results = {'Actor': {'F1Ma':None, 'F1Mi':None}, 'Texas': {'F1Ma':None, 'F1Mi': None}, 'Wisconsin':{'F1Ma':None, 'F1Mi': None},'Cornell': {'F1Ma':None, 'F1Mi':None}, 'chameleon': {'F1Ma':None, 'F1Mi': None}, 'Cora':{'F1Ma':None, 'F1Mi':None}, 'Citeseer':{'F1Ma': None, 'F1Mi':None}}
-    #results = {'chameleon': {'F1Ma':None, 'F1Mi': None}, 'squirrel':{'F1Ma':None, 'F1Mi': None}}
+    homs, comps, amis, chs, sils = [], [], [], [], []
     for dataname in datasets:
         print(f'Training on {dataname}')        
-        seed = 42
-        torch.manual_seed(seed)
-        np.random.seed(seed)
-        torch.backends.cudnn.deterministic = True
-        torch.backends.cudnn.benchmark = False
-        path = osp.join(osp.expanduser('~'), 'datasets')
-        dataset = WikipediaNetwork(path, name=dataname, transform=T.NormalizeFeatures())
-        #dataset = WebKB(path, name=dataname, transform=T.NormalizeFeatures())
-        #dataset = Planetoid(path, name=dataname, transform=T.NormalizeFeatures())
-        #dataset = Actor(path, transform=T.NormalizeFeatures())
-        data = dataset[0]
-        #pdb.set_trace()
-        #gconv1 = GConv(input_dim=dataset.num_features, hidden_dim=512, num_layers=2)
-        gconv2 = GConvMultiScale(input_dim=dataset.num_features, hidden_dim=512, num_layers=2, nm_scale=data_scales[dataname])
-        encoder_model = Encoder(encoder2=gconv2, diffusion=diffusion, input_dim=dataset.num_features, hidden_dim=512, device_ids=device_ids, nm_scale=data_scales[dataname], eps=data_eps[dataname])
-        #contrast_model = DualBranchContrast(loss=L.InfoNCE(tau=0.1), mode='G2L').to(device_ids['contrast'])
-        contrast_model = SingleBranchContrast(loss=L.JSD(), mode='G2L').to(device_ids['contrast'])
-        optimizer = Adam(encoder_model.parameters(), lr=0.001)
+        #seed = 42
+        #torch.manual_seed(seed)
+        #np.random.seed(seed)
+        #torch.backends.cudnn.deterministic = True
+        #torch.backends.cudnn.benchmark = False
+        for t in range(nm_trials):        
+            G, _, _, role_id = build_graph.build_structure(width_basis=data_wb[dataname], basis_type='cycle', list_shapes=data_shapes[dataname], start=0, rdm_basis_plugins=False, add_random_edges=4, plot=False, savefig=False)
+            print('nb of nodes in the graph: ', G.number_of_nodes())
+            print('nb of edges in the graph: ', G.number_of_edges())
+            graph = from_networkx(G)
+            x = torch.tensor([[deg] for _, deg in G.degree()], dtype=torch.float)
+            dataset = Data(x=x, edge_index=graph.edge_index)
+            data = dataset
+            gconv2 = GConvMultiScale(input_dim=dataset.num_features, hidden_dim=512, num_layers=2, nm_scale=data_scales[dataname])
+            encoder_model = Encoder(encoder2=gconv2, diffusion=diffusion, input_dim=dataset.num_features, hidden_dim=512, device_ids=device_ids, nm_scale=data_scales[dataname], eps=data_eps[dataname])
+            contrast_model = DualBranchContrast(loss=L.JSD(), mode='G2L').to(device_ids['contrast'])
+            #contrast_model = SingleBranchContrast(loss=L.JSD(), mode='G2L').to(device_ids['contrast'])
+            optimizer = Adam(encoder_model.parameters(), lr=0.001)
 
-        with tqdm(total=300, desc='(T)') as pbar:
-            for epoch in range(1, 301):
-                loss = train(encoder_model, contrast_model, data, optimizer)
-                pbar.set_postfix({'loss': loss})
-                pbar.update()
+            with tqdm(total=300, desc='(T)') as pbar:
+                for epoch in range(1, 301):
+                    loss = train(encoder_model, contrast_model, data, optimizer)
+                    pbar.set_postfix({'loss': loss})
+                    pbar.update()
 
-        torch.save({'encoder2':gconv2.state_dict(), 
-        'contrast':contrast_model.state_dict(),'optim':optimizer.state_dict()}, f'{results_path}/model_{dataname}_diffusion_{diffusion}_scales_{data_scales[dataname]}_eps_{data_eps[dataname]:.2e}.pt'.replace('.00', ''))
-        F1Ma, F1Mi = [], []
-        for i in range(nm_trials):
-            test_result_all = test(encoder_model, data)
-            F1Ma = [test_result["macro_f1"] for test_result in test_result_all]
-            F1Mi = [test_result["micro_f1"] for test_result in test_result_all]
-            #print(f'(E): Trial= {i+1} Best test Accuracy={test_result["micro_f1"]:.4f}, F1Ma={test_result["macro_f1"]:.4f}')
-
-        #F1Ma = np.array(F1Ma)
-        #F1Mi = np.array(F1Mi)
-            
-        print(f'Data {dataname} Mean F1Ma= {np.mean(F1Ma)} Std F1Ma={np.std(F1Ma)}')
-        print(f'Data {dataname} Mean Acc= {np.mean(F1Mi)} Std Acc={np.std(F1Mi)}')
-        results[dataname]['F1Ma'] = [f'{el:.4f}' for el in F1Ma]
-        results[dataname]['F1Mi'] = [f'{el:.4f}' for el in F1Mi]
-    with open(f'{results_path}{problem}DWTmetrics.yaml', 'w') as f:
-        yaml.dump(results, f)
+            torch.save({'encoder2':gconv2.state_dict(), 
+            'contrast':contrast_model.state_dict(),'optim':optimizer.state_dict()}, f'{results_path}/model_{dataname}_diffusion_{diffusion}_scales_{data_scales[dataname]}_eps_{data_eps[dataname]:.2e}_trial_{t}.pt'.replace('.00', ''))
+        
+            hom, comp, ami, nb_clust, ch, sil = test(encoder_model, data, role_id, t)
+            homs.append(hom)
+            comps.append(comp)
+            amis.append(ami)
+            chs.append(ch)
+            sils.append(sil)
+        print('Homogeneity \t Completeness \t AMI \t nb clusters \t CH \t  Silhouette \n')
+        print(str(sum(homs)/nm_trials), str(sum(comps)/nm_trials), str(sum(amis)/nm_trials), str(nb_clust), 
+                 str(sum(chs)/nm_trials), str(sum(sils)/nm_trials))
 
 if __name__ == '__main__':
     main()

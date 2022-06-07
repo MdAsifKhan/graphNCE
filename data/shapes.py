@@ -7,7 +7,7 @@ import networkx as nx
 import numpy as np
 import scipy as sc
 import torch.nn.functional as F
-
+import pdb
 
 def barbel_graph(start, n1, n2, role_start=0, plot=False):
     '''Creates a Barbell-graph (two dense components connected by a stringraph)

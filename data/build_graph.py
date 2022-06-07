@@ -8,7 +8,7 @@ from data.shapes import *
 import data.utils as utils
 import torch.nn.functional as F
 import torch
-
+import pdb
 
 def build_structure(width_basis, basis_type, list_shapes, start=0,
                     rdm_basis_plugins =False, add_random_edges=0,
@@ -41,7 +41,6 @@ def build_structure(width_basis, basis_type, list_shapes, start=0,
     nx.set_node_attributes(basis, attrs)
     n_basis, n_shapes = nx.number_of_nodes(basis), len(list_shapes)
     start += n_basis        # indicator of the id of the next node
-
     # Sample (with replacement) where to attach the new motives
     if rdm_basis_plugins is True:
         plugins = np.random.choice(n_basis, n_shapes, replace=False)
@@ -62,7 +61,7 @@ def build_structure(width_basis, basis_type, list_shapes, start=0,
         if add_attributes:
             args += [shape_id * 5]
         else:
-            args += [0]
+            args += [None]
         graph_s, roles_graph_s = eval(shape_type)(*args)
         n_s = nx.number_of_nodes(graph_s)
         try:
@@ -80,7 +79,6 @@ def build_structure(width_basis, basis_type, list_shapes, start=0,
         temp_labels[0] += 100 * seen_shapes[shape_type][0]
         role_id += temp_labels
         start += n_s
-
     if add_random_edges > 0:
         # add random edges between nodes:
         for p in range(add_random_edges):

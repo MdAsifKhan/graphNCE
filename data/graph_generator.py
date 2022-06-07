@@ -1,4 +1,6 @@
 from data import build_graph
+import seaborn as sb
+import pdb
 
 def graph_generator(width_basis=15, basis_type = "cycle", n_shapes = 5, shape_list=[[["house"]]], identifier = 'AA', add_edges = 0):
     ################################### EXAMPLE TO BUILD A SIMPLE REGULAR STRUCTURE ##########
@@ -9,7 +11,6 @@ def graph_generator(width_basis=15, basis_type = "cycle", n_shapes = 5, shape_li
     for shape in shape_list:
         list_shapes += shape * n_shapes
     print(list_shapes)
-
     ### 3. Give a name to the graph
     name_graph = 'houses' + identifier
     sb.set_style('white')
@@ -18,4 +19,7 @@ def graph_generator(width_basis=15, basis_type = "cycle", n_shapes = 5, shape_li
     G, communities, plugins, role_id = build_graph.build_structure(width_basis, basis_type, list_shapes, start=0,
                                                                    add_random_edges=add_edges,
                                                                    plot=True, savefig=False)
+    #import pdb
+    #pdb.set_trace()
+    #print(G.nodes())
     return G, role_id
