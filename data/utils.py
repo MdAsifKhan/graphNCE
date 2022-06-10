@@ -130,10 +130,10 @@ def saveNet2txt(G, colors=[], name="net", path="plots/"):
         colors = range(nx.number_of_nodes(G))
     graph_list_rep = [["Id","color"]] + [[i,colors[i]]
                       for i in range(nx.number_of_nodes(G))]
-    np.savetxt(path + name + "_nodes.txt", graph_list_rep, fmt='%s %s')
+    np.savetxt(path + name + "_nodes.csv", graph_list_rep, fmt='%s,%s')
     edges = G.edges(data=False)
     edgeList = [["Source", "Target"]] + [[v[0], v[1]] for v in edges]
-    np.savetxt(path + name + "_edges.txt", edgeList, fmt='%s %s')
+    np.savetxt(path + name + "_edges.csv", edgeList, fmt='%s,%s')
     print ("saved network  edges and nodes to txt file (for Gephi vis)")
     return
 

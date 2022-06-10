@@ -237,7 +237,7 @@ def unsupervised_evaluate(colors, labels_pred, trans_data, nb_clust):
     return hom, comp, ami, nb_clust, ch, sil
 
 
-def draw_pca(role_id, node_embeddings, coloring):
+def draw_pca(role_id, node_embeddings, coloring, out_path):
     pca = PCA(n_components=2)
     node_embedded = StandardScaler().fit_transform(node_embeddings.cpu().detach())
     principalComponents = pca.fit_transform(node_embedded)
@@ -250,16 +250,22 @@ def draw_pca(role_id, node_embeddings, coloring):
     ax.set_ylabel('Principal Component 2', fontsize=15)
     ax.set_title('2 PCA Components', fontsize=20)
     targets = np.unique(role_id)
+    import pdb
+    #pdb.set_trace()
+    #colors = {-21:0, 0:1, 2:2, 3:3, 4:4, 202:5}
+    colors = {-21:'deepskyblue', 0:'darkorange', 2:'lime', 3:'orangered', 4:'violet', 202:'darkgreen'}
     for target in zip(targets):
         color = coloring[target[0]]
+        #pdb.set_trace()
         indicesToKeep = principalDf['target'] == target
         ax.scatter(principalDf.loc[indicesToKeep, 'principal component 1'],
                    principalDf.loc[indicesToKeep, 'principal component 2'],
                    s=50,
-                   c=color)
+                   c=colors[target[0]])
     ax.legend(targets)
     ax.grid()
-    plt.show()
+    plt.savefig(f"{out_path}pca.png")
+    #plt.show()
 
 
 def graph_generator(width_basis=15, basis_type = "cycle", n_shapes = 5, shape_list=[[["house"]]], identifier = 'AA', add_edges = 0):

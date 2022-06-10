@@ -4,6 +4,8 @@ from torch_geometric.transforms import GDC
 from torch_geometric.utils import add_self_loops, is_undirected, to_dense_adj, get_laplacian
 from torch_sparse import SparseTensor, coalesce
 from torch_scatter import scatter_add
+import pdb
+import matplotlib.pyplot as plt
 
 class DiffusionAugmentation(nn.Module):
     def __init__(self, nm_filters = 8,
@@ -96,21 +98,39 @@ class DiffusionAugmentation(nn.Module):
             edge_weight = torch.ones(edge_index.size(1), device=edge_index.device)
         edge_index, edge_weight = self.transition_matrix(edge_index, edge_weight, nm_nodes, normalization='col')
         W = to_dense_adj(edge_index, edge_attr=edge_weight).squeeze()
+        #plt.close()
+        #plt.imshow(W.detach().cpu().numpy(),vmin=0, vmax=1, aspect='auto')
+        #plt.axis('off')
+        #plt.savefig('orig.png')
         eye = torch.eye(*W.shape).to(W.device)
         edge_index_T = [edge_index] 
         edge_weight_T = [edge_weight]
         if self.nm_filters<1:
             return edge_index_T, edge_weight_T
-        T = (0.6*eye + 0.4*W) # Lazy diffusion operator
+        #T = (0.8*eye + 0.2*W) # Lazy diffusion operator # wiki data
+        T = (0.8*eye + 0.2*W)  # structure data
         if not test:
             #eps = (torch.rand(self.nm_filters) * (0.01 - self.eps) + self.eps).to(T.device)
             eps = torch.ones(self.nm_filters) * self.eps 
         else:
             eps = torch.ones(self.nm_filters) * self.eps
-        edge_index_0, edge_weight_0 = GDC().sparsify_dense(T, method='threshold', eps=eps[0])
-        #edge_index_0, edge_weight_0 = GDC().sparsify_dense(T, method='topk', k=4, dim=1)   
+        filter_0 = torch.sigmoid(torch.eye(*T.shape).to(T.device) - T)
+        #filter_T = [filter_0]
+        #plt.close()
+        #plt.imshow(filter_0.detach().cpu().numpy())
+        #plt.axis('off')
+        #plt.savefig('filter0.png')
+        #plt.close()
+        #edge_index_0, edge_weight_0 = GDC().sparsify_dense(filter_0, method='threshold', eps=eps[0])
+        edge_index_0, edge_weight_0 = GDC().sparsify_dense(filter_0, method='topk', k=2, dim=1)   
         edge_index_0, edge_weight_0 = coalesce(edge_index_0, edge_weight_0, nm_nodes, nm_nodes)
         edge_index_0, edge_weight_0 = self.transition_matrix(edge_index_0, edge_weight_0, nm_nodes, normalization='col')
+        #W0 = to_dense_adj(edge_index_0, edge_attr=edge_weight_0).squeeze()
+        #pdb.set_trace()
+        #plt.imshow(W0.detach().cpu().numpy(), vmin=0, vmax=1, aspect='auto')
+        #plt.axis('off')
+        #plt.savefig('filter0.png')
+        #plt.close()
         edge_index_T.append(edge_index_0)
         edge_weight_T.append(edge_weight_0)
         for i in range(1, self.nm_filters):
@@ -121,15 +141,29 @@ class DiffusionAugmentation(nn.Module):
             #score = torch.sigmoid(thresh*filter_t - self.bias[i])
             #edge_index_t = (score >= 0.5).nonzero(as_tuple=False).t()
             #edge_weight_t = score.flatten()[edge_index_t[0] * nm_nodes + edge_index_t[1]]
-            #edge_index_t, edge_weight_t = GDC().sparsify_dense(T, method='topk', k=4, dim=1)
-            edge_index_t, edge_weight_t = GDC().sparsify_dense(filter_t, method='threshold', eps=eps[i])
+            #plt.imshow(filter_t.detach().cpu().numpy(), vmin=0, vmax=1, aspect='auto')
+            #plt.axis('off')
+            #plt.savefig(f"filter_{i}.png")
+            #plt.close()
+            edge_index_t, edge_weight_t = GDC().sparsify_dense(filter_t, method='topk', k=2, dim=1)
+       
+            #filter_t = torch.exp(filter_t)
+            #edge_index_t, edge_weight_t = GDC().sparsify_dense(filter_t, method='threshold', eps=eps[i])
             edge_index_t, edge_weight_t = coalesce(edge_index_t, edge_weight_t, nm_nodes, nm_nodes)
             edge_index_t, edge_weight_t = self.transition_matrix(edge_index_t, edge_weight_t, nm_nodes, normalization='col')
+            #Wt = to_dense_adj(edge_index_t, edge_attr=edge_weight_t).squeeze()
+            #plt.imshow(Wt.detach().cpu().numpy(), vmin=0, vmax=1, aspect='auto')
+            #plt.axis('off')
+            #plt.savefig(f"filter_{i}.png")
+            #plt.close()
             edge_index_T.append(edge_index_t)
             edge_weight_T.append(edge_weight_t)
+            #filter_T.append(filter_t)
             del filter_t, Tp
         #edge_index_T = torch.stack(edge_index_T)
         #edge_weight_T = torch.stack(edge_weight_T)
+        #pdb.set_trace()
+        #pdb.set_trace()
         return edge_index_T, edge_weight_T
 
     def forward(self, edge_index, edge_weight, test=False):

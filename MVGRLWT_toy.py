@@ -38,7 +38,7 @@ class GConv(nn.Module):
             z = conv(z, edge_index, edge_weight)
             z = self.activation(z)
         return z
-'''
+
 class MLP(nn.Module):
     def __init__(self, hidden_dim):
         super(MLP, self).__init__()
@@ -54,7 +54,7 @@ class MLP(nn.Module):
 
     def forward(self, x):
        return self.mlp(x)
-'''
+
 class GConvMultiScale(nn.Module):
     def __init__(self, input_dim, hidden_dim, num_layers, nm_scale=8):
         super(GConvMultiScale, self).__init__()
@@ -153,7 +153,26 @@ class Encoder(torch.nn.Module):
     #        z = self.activation(z)
     #    z = torch.softmax(self.coeff_proj(z), 0)
     #    return z
-
+    def plot_graphs(self, x, edge_index, edge_weight=None, role_labels=None):
+        if edge_weight is not None:
+            edge_weight = edge_weight.to(self.device_ids['data'])
+        edge_index2, edge_weight2 = self.aug(edge_index.to(self.device_ids['data']), edge_weight)
+        pdb.set_trace()
+        from torch_geometric.data import Data
+        from torch_geometric.utils import to_networkx
+        import networkx as nx
+        for i in range(len(edge_index2)):
+            graph = Data(x, edge_index2[i], edge_weight2[i])
+            graph = to_networkx(graph, to_undirected=True, remove_self_loops=True)
+            cmap = plt.get_cmap('hot')
+            x_range = np.linspace(0, 0.8, len(np.unique(role_labels)))
+            coloring = {u: cmap(x_range[i]) for i, u in enumerate(np.unique(role_labels))}
+            node_color = [coloring[role_labels[i]] for i in range(len(role_labels))]
+            plt.figure()
+            nx.draw_networkx(graph, pos=nx.layout.spring_layout(graph), 
+                                       node_color=node_color, cmap='hot')
+            plt.savefig(f"graph_scale_{i+1}.png")
+            plt.close()
     def forward(self, x, edge_index, edge_weight=None, test=False):
         #if edge_weight is not None:
         #    edge_weight = edge_weight.to(self.device_ids['encoder1'])
@@ -231,9 +250,10 @@ def train(encoder_model, contrast_model, data, optimizer):
     return loss.item()
 
 
-from utils import cluster_graph, unsupervised_evaluate
+from utils import cluster_graph, unsupervised_evaluate, draw_pca
+import matplotlib.pyplot as plt
 
-def test(encoder_model, data, role_id, trial=0):
+def test(encoder_model, data, role_id, trial=0, out_path='results/'):
     encoder_model.eval()
     z, _, _ = encoder_model(data.x, data.edge_index, test=True)
     
@@ -241,6 +261,10 @@ def test(encoder_model, data, role_id, trial=0):
     hom, comp, ami, nb_clust, ch, sil = unsupervised_evaluate(colors, labels_pred, trans_data, nb_clust)
     print(f"Trial {trial} \t Homogeneity \t Completeness \t AMI \t nb clusters \t CH \t  Silhouette \n")
     print(hom, comp, ami, nb_clust, ch, sil)
+    x_range = np.linspace(0, 0.9, len(np.unique(role_id)))
+    cmap = plt.get_cmap('hot')
+    coloring = {u: cmap(x_range[i]) for i, u in enumerate(np.unique(role_id))}
+    draw_pca(role_id, z.mean(1), coloring, out_path)
     return hom, comp, ami, nb_clust, ch, sil
     
 from data import build_graph
@@ -248,13 +272,13 @@ from torch_geometric.utils import from_networkx
 from torch_geometric.data import Data
 def main():
     datasets = ['house']
-    device_ids = {'data':4, 'encoder1':5, 'encoder2':6, 'projector':7, 'contrast':4}
-    
-    data_eps = {'house': 1e-3, 'varied':1e-5}
-    data_scales = {'house':4, 'varied':4}
+    device_ids = {'data':0, 'encoder1':0, 'encoder2':0, 'projector':0, 'contrast':0}
+    #coloring = {u: cmap(x_range[i]) for i, u in enumerate(np.unique(role_id))} 
+    data_eps = {'house': 1e-1, 'varied':1e-5}
+    data_scales = {'house':3, 'varied':4}
     data_shapes = {'house': [["house"]]*5, 'varied':[["fan",8]]+[["star",8]]+[["house", 8]]}
     data_wb = {'house':15, 'varied':25}
-    nm_trials = 20
+    nm_trials = 1
     diffusion = 'wavelet'
     results_path = '/disk/scratch2/asif/workspace/graphNCE/modelsDWT/'
     if not os.path.exists(results_path):
@@ -269,19 +293,19 @@ def main():
         #torch.backends.cudnn.deterministic = True
         #torch.backends.cudnn.benchmark = False
         for t in range(nm_trials):        
-            G, _, _, role_id = build_graph.build_structure(width_basis=data_wb[dataname], basis_type='cycle', list_shapes=data_shapes[dataname], start=0, rdm_basis_plugins=False, add_random_edges=4, plot=False, savefig=False)
+            G, _, _, role_id = build_graph.build_structure(width_basis=data_wb[dataname], basis_type='cycle', list_shapes=data_shapes[dataname], start=0, rdm_basis_plugins=False, add_random_edges=0, plot=True, savefig=False)
             print('nb of nodes in the graph: ', G.number_of_nodes())
             print('nb of edges in the graph: ', G.number_of_edges())
             graph = from_networkx(G)
             x = torch.tensor([[deg] for _, deg in G.degree()], dtype=torch.float)
             dataset = Data(x=x, edge_index=graph.edge_index)
             data = dataset
-            gconv2 = GConvMultiScale(input_dim=dataset.num_features, hidden_dim=512, num_layers=2, nm_scale=data_scales[dataname])
-            encoder_model = Encoder(encoder2=gconv2, diffusion=diffusion, input_dim=dataset.num_features, hidden_dim=512, device_ids=device_ids, nm_scale=data_scales[dataname], eps=data_eps[dataname])
+            gconv2 = GConvMultiScale(input_dim=dataset.num_features, hidden_dim=6, num_layers=2, nm_scale=data_scales[dataname])
+            encoder_model = Encoder(encoder2=gconv2, diffusion=diffusion, input_dim=dataset.num_features, hidden_dim=6, device_ids=device_ids, nm_scale=data_scales[dataname], eps=data_eps[dataname])
             contrast_model = DualBranchContrast(loss=L.JSD(), mode='G2L').to(device_ids['contrast'])
             #contrast_model = SingleBranchContrast(loss=L.JSD(), mode='G2L').to(device_ids['contrast'])
             optimizer = Adam(encoder_model.parameters(), lr=0.001)
-
+            #encoder_model.plot_graphs(data.x, data.edge_index, edge_weight=None, role_labels=role_id)
             with tqdm(total=300, desc='(T)') as pbar:
                 for epoch in range(1, 301):
                     loss = train(encoder_model, contrast_model, data, optimizer)
@@ -291,7 +315,7 @@ def main():
             torch.save({'encoder2':gconv2.state_dict(), 
             'contrast':contrast_model.state_dict(),'optim':optimizer.state_dict()}, f'{results_path}/model_{dataname}_diffusion_{diffusion}_scales_{data_scales[dataname]}_eps_{data_eps[dataname]:.2e}_trial_{t}.pt'.replace('.00', ''))
         
-            hom, comp, ami, nb_clust, ch, sil = test(encoder_model, data, role_id, t)
+            hom, comp, ami, nb_clust, ch, sil = test(encoder_model, data, role_id, t, results_path)
             homs.append(hom)
             comps.append(comp)
             amis.append(ami)

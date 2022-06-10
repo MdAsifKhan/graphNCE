@@ -365,14 +365,26 @@ def tree(start, nb_levels, regularity, role_start=0, plot=False):
     if plot is True: plot_networkx(graph, roles)
     return graph, roles
 
+from data.utils import saveNet2txt
+import matplotlib.cm as cp
+import matplotlib as mpl
 
 def plot_networkx(graph, role_labels):
         cmap = plt.get_cmap('hot')
         x_range = np.linspace(0, 0.8, len(np.unique(role_labels)))
         coloring = {u: cmap(x_range[i]) for i, u in enumerate(np.unique(role_labels))}
         node_color = [coloring[role_labels[i]] for i in range(len(role_labels))]
+        clr_map = {role:idx for idx, role in enumerate(list(set(role_labels)))}
+        role_colors = [clr_map[role] for role in role_labels]
+        #import pdb
+        #pdb.set_trace()
+        saveNet2txt(graph, role_colors, name='house', path='results')
         plt.figure()
         nx.draw_networkx(graph, pos=nx.layout.fruchterman_reingold_layout(graph),
                          node_color=node_color, cmap='hot')
-        plt.show()
+        plt.savefig('graph.png')
+        #
+        #norm = mpl.colors.Normalize(vmin=-20, vmax=20)
+        #m = cm.ScalarMappable(norm=norm, cmap=cmap)
+        #plt.show()
         return
